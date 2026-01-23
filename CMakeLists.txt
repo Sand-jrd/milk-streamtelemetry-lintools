@@ -142,3 +142,17 @@ target_link_libraries(milk-streamtelemetry-verify-corr PRIVATE
     ${CFITSIO_LIBRARIES}
     m
 )
+
+install(TARGETS
+    milk-streamtelemetry-cca
+    milk-streamtelemetry-modeval
+    milk-streamtelemetry-cubeshuffle
+    milk-streamtelemetry-pca
+    milk-streamtelemetry-recon
+    milk-streamtelemetry-pcamerge
+    milk-streamtelemetry-mkearthseq
+    milk-streamtelemetry-3DFITS-to-png
+    milk-streamtelemetry-fits2ascii
+    milk-streamtelemetry-verify-corr
+    DESTINATION /usr/local/milk/bin
+)
