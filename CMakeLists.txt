@@ -5,8 +5,8 @@ find_package(PkgConfig REQUIRED)
 
 pkg_check_modules(CFITSIO REQUIRED cfitsio)
 pkg_check_modules(OPENBLAS REQUIRED openblas)
-pkg_check_modules(LAPACKE REQUIRED lapacke)
 pkg_check_modules(LIBPNG REQUIRED libpng)
+find_package(LAPACK REQUIRED)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -Wall")
@@ -68,6 +68,22 @@ target_link_libraries(milk-streamtelemetry-pca PRIVATE
     ${LAPACKE_LIBRARIES}
     m
 )
+
+# PCA Projection Program
+add_executable(milk-streamtelemetry-pcaproj pcaproj.c)
+target_include_directories(milk-streamtelemetry-pcaproj PRIVATE
+    ${CFITSIO_INCLUDE_DIRS}
+    ${OPENBLAS_INCLUDE_DIRS}
+    ${LAPACKE_INCLUDE_DIRS}
+)
+target_link_libraries(milk-streamtelemetry-pcaproj PRIVATE
+    common
+    ${CFITSIO_LIBRARIES}
+    ${OPENBLAS_LIBRARIES}
+    ${LAPACKE_LIBRARIES}
+    m
+)
+
 
 # Reconstruction Program
 add_executable(milk-streamtelemetry-recon recon.c)
