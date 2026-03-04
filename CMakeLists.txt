@@ -69,6 +69,22 @@ target_link_libraries(milk-streamtelemetry-pca PRIVATE
     m
 )
 
+# Iterative PCA Program
+add_executable(milk-streamtelemetry-ipca ipca.c)
+target_include_directories(milk-streamtelemetry-ipca PRIVATE
+    ${CFITSIO_INCLUDE_DIRS}
+    ${OPENBLAS_INCLUDE_DIRS}
+    ${LAPACKE_INCLUDE_DIRS}
+)
+target_link_libraries(milk-streamtelemetry-ipca PRIVATE
+    common
+    ${CFITSIO_LIBRARIES}
+    ${OPENBLAS_LIBRARIES}
+    ${LAPACKE_LIBRARIES}
+    m
+)
+
+
 # PCA Projection Program
 add_executable(milk-streamtelemetry-pcaproj pcaproj.c)
 target_include_directories(milk-streamtelemetry-pcaproj PRIVATE
@@ -159,16 +175,49 @@ target_link_libraries(milk-streamtelemetry-verify-corr PRIVATE
     m
 )
 
+# WFS2PSF Fit Program
+add_executable(milk-streamtelemetry-wfs2psf-fit wfs2psf_fit.c)
+target_include_directories(milk-streamtelemetry-wfs2psf-fit PRIVATE
+    ${CFITSIO_INCLUDE_DIRS}
+    ${OPENBLAS_INCLUDE_DIRS}
+    ${LAPACKE_INCLUDE_DIRS}
+)
+target_link_libraries(milk-streamtelemetry-wfs2psf-fit PRIVATE
+    common
+    ${CFITSIO_LIBRARIES}
+    ${OPENBLAS_LIBRARIES}
+    ${LAPACKE_LIBRARIES}
+    m
+)
+
+# WFS2PSF Predict Program
+add_executable(milk-streamtelemetry-wfs2psf-predict wfs2psf_predict.c)
+target_include_directories(milk-streamtelemetry-wfs2psf-predict PRIVATE
+    ${CFITSIO_INCLUDE_DIRS}
+    ${OPENBLAS_INCLUDE_DIRS}
+    ${LAPACKE_INCLUDE_DIRS}
+)
+target_link_libraries(milk-streamtelemetry-wfs2psf-predict PRIVATE
+    common
+    ${CFITSIO_LIBRARIES}
+    ${OPENBLAS_LIBRARIES}
+    ${LAPACKE_LIBRARIES}
+    m
+)
+
 install(TARGETS
     milk-streamtelemetry-cca
     milk-streamtelemetry-modeval
     milk-streamtelemetry-cubeshuffle
     milk-streamtelemetry-pca
+    milk-streamtelemetry-ipca
     milk-streamtelemetry-recon
     milk-streamtelemetry-pcamerge
     milk-streamtelemetry-mkearthseq
     milk-streamtelemetry-3DFITS-to-png
     milk-streamtelemetry-fits2ascii
     milk-streamtelemetry-verify-corr
+    milk-streamtelemetry-wfs2psf-fit
+    milk-streamtelemetry-wfs2psf-predict
     DESTINATION /usr/local/milk/bin
 )
