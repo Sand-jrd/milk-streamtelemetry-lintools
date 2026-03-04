@@ -357,7 +357,7 @@ int main(int argc, char **argv) {
             double *ZtZ_copy = (double *)malloc(z_dim * z_dim * sizeof(double));
             memcpy(ZtZ_copy, ZtZ, z_dim * z_dim * sizeof(double));
             double *S_ztz = (double *)malloc(z_dim * sizeof(double));
-            LAPACKE_dgesdd(LAPACK_ROW_MAJOR, 'O', z_dim, z_dim, ZtZ_copy, z_dim, S_ztz, NULL, z_dim, NULL, z_dim);
+            LAPACKE_dgesdd(LAPACK_ROW_MAJOR, 'N', z_dim, z_dim, ZtZ_copy, z_dim, S_ztz, NULL, 1, NULL, 1);
             
             double norm_ZtZ = S_ztz[0];
             double eps = 2.2204460492503131e-16;
@@ -586,7 +586,7 @@ int main(int argc, char **argv) {
             float *ZtZ_copy = (float *)malloc(z_dim * z_dim * sizeof(float));
             memcpy(ZtZ_copy, ZtZ, z_dim * z_dim * sizeof(float));
             float *S_ztz = (float *)malloc(z_dim * sizeof(float));
-            LAPACKE_sgesdd(LAPACK_ROW_MAJOR, 'O', z_dim, z_dim, ZtZ_copy, z_dim, S_ztz, NULL, z_dim, NULL, z_dim);
+            LAPACKE_sgesdd(LAPACK_ROW_MAJOR, 'N', z_dim, z_dim, ZtZ_copy, z_dim, S_ztz, NULL, 1, NULL, 1);
             
             float norm_ZtZ = S_ztz[0];
             float eps = 1.1920929e-07f;
