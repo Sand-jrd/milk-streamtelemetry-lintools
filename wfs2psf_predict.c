@@ -87,7 +87,8 @@ int main(int argc, char **argv) {
         read_fits(path, &X_std, &n1, &p1, &xa, &ya, &nax);
 
         snprintf(path, 1024, "%s_Ymean.fits", model_prefix);
-        read_fits(path, &Y_mean, &n1, &p2, &xa, &ya, &nax);
+        int xa_y, ya_y, nax_y;
+        read_fits(path, &Y_mean, &n1, &p2, &xa_y, &ya_y, &nax_y);
         long P_Y = n1 * p2; 
 
         snprintf(path, 1024, "%s_Ystd.fits", model_prefix);
@@ -155,9 +156,11 @@ int main(int argc, char **argv) {
         }
 
         // write Y_new
-        // if nax_x == 3, maybe we want to write a 3D FITS if Y is a cube.
-        // Actually Y could be 2D. We should save as 2D (P_Y, N) where P_Y is columns, N is rows
-        write_fits_2d(out_file, Y_new, P_Y, N);
+        if (nax_y == 3) {
+            write_fits_3d(out_file, Y_new, xa_y, ya_y, N);
+        } else {
+            write_fits_2d(out_file, Y_new, P_Y, N);
+        }
 
         free(X); free(X_mean); free(X_std); free(Y_mean); free(Y_std);
         free(PCx); free(B_latent);
@@ -187,7 +190,8 @@ int main(int argc, char **argv) {
         read_fits_float(path, &X_std, &n1, &p1, &xa, &ya, &nax);
 
         snprintf(path, 1024, "%s_Ymean.fits", model_prefix);
-        read_fits_float(path, &Y_mean, &n1, &p2, &xa, &ya, &nax);
+        int xa_y, ya_y, nax_y;
+        read_fits_float(path, &Y_mean, &n1, &p2, &xa_y, &ya_y, &nax_y);
         long P_Y = n1 * p2; 
 
         snprintf(path, 1024, "%s_Ystd.fits", model_prefix);
@@ -250,7 +254,11 @@ int main(int argc, char **argv) {
             }
         }
 
-        write_fits_2d_float(out_file, Y_new, P_Y, N);
+        if (nax_y == 3) {
+            write_fits_3d_float(out_file, Y_new, xa_y, ya_y, N);
+        } else {
+            write_fits_2d_float(out_file, Y_new, P_Y, N);
+        }
 
         free(X); free(X_mean); free(X_std); free(Y_mean); free(Y_std);
         free(PCx); free(B_latent);

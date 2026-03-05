@@ -455,9 +455,15 @@ int main(int argc, char **argv) {
         write_fits_2d(path, X_std, P_X, 1);
 
         snprintf(path, 1024, "%s_Ymean.fits", out_prefix);
-        write_fits_2d(path, Y_mean, P_Y, 1);
-        snprintf(path, 1024, "%s_Ystd.fits", out_prefix);
-        write_fits_2d(path, Y_std, P_Y, 1);
+        if (nax_y == 3) {
+            write_fits_3d(path, Y_mean, xa_y, ya_y, 1);
+            snprintf(path, 1024, "%s_Ystd.fits", out_prefix);
+            write_fits_3d(path, Y_std, xa_y, ya_y, 1);
+        } else {
+            write_fits_2d(path, Y_mean, P_Y, 1);
+            snprintf(path, 1024, "%s_Ystd.fits", out_prefix);
+            write_fits_2d(path, Y_std, P_Y, 1);
+        }
 
         printf("Output FITS files generated successfully with prefix: %s\n", out_prefix);
 
@@ -723,9 +729,15 @@ int main(int argc, char **argv) {
         write_fits_2d_float(path, X_std, P_X, 1);
 
         snprintf(path, 1024, "%s_Ymean.fits", out_prefix);
-        write_fits_2d_float(path, Y_mean, P_Y, 1);
-        snprintf(path, 1024, "%s_Ystd.fits", out_prefix);
-        write_fits_2d_float(path, Y_std, P_Y, 1);
+        if (nax_y == 3) {
+            write_fits_3d_float(path, Y_mean, xa_y, ya_y, 1);
+            snprintf(path, 1024, "%s_Ystd.fits", out_prefix);
+            write_fits_3d_float(path, Y_std, xa_y, ya_y, 1);
+        } else {
+            write_fits_2d_float(path, Y_mean, P_Y, 1);
+            snprintf(path, 1024, "%s_Ystd.fits", out_prefix);
+            write_fits_2d_float(path, Y_std, P_Y, 1);
+        }
 
         printf("Output FITS files generated successfully with prefix: %s\n", out_prefix);
 
