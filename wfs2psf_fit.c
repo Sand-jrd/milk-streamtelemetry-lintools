@@ -4,6 +4,7 @@
 #include <math.h>
 #include <cblas.h>
 #include <lapacke.h>
+#include <float.h>
 #include "common.h"
 
 // Helper to expand T to Z
@@ -282,6 +283,7 @@ int main(int argc, char **argv) {
             printf("WFS PC number set to %d\n", nx);
         }
         if (nx > min_dim_X) nx = min_dim_X;
+        printf("PCA on X completed.\n");
 
         // PCx is Vt_x[:nx, :].T  -> P_X x nx
         double *PCx = (double *)malloc(P_X * nx * sizeof(double));
@@ -325,17 +327,21 @@ int main(int argc, char **argv) {
                         N, ny, P_Y, 1.0, Y, P_Y, PCy, ny, 0.0, U_latent, ny);
 
             free(Yc_copy); free(S_y); free(U_y); free(Vt_y);
+            printf("PCA on Y completed.\n");
         } else {
             U_latent = Y; // point to Y directly
         }
 
         int z_dim = use_quadratic ? (nx + nx*(nx+1)/2) : nx;
         double *Z = (double *)malloc(N * z_dim * sizeof(double));
+        if (!Z) { fprintf(stderr, "Failed to allocate Z (N=%d, z_dim=%d)\n", (int)N, z_dim); exit(1); }
+        printf("Starting quadratic expansion (z_dim=%d)...\n", z_dim);
         if (use_quadratic) {
             quadratic_expand_double(T, Z, N, nx);
         } else {
             memcpy(Z, T, N * nx * sizeof(double));
         }
+        printf("Quadratic expansion completed.\n");
 
         int y_pca_mode = (ny > 0);
         if (!y_pca_mode && noise_std > 0) {
@@ -344,39 +350,74 @@ int main(int argc, char **argv) {
             }
         }
 
+        printf("Starting regression...\n");
         double *B_latent = (double *)malloc(z_dim * target_dim * sizeof(double));
+        if (!B_latent) { fprintf(stderr, "Failed to allocate B_latent (%d x %d)\n", z_dim, target_dim); exit(1); }
         
         if (reg_mode) {
-            // Ridge regression
-            // ZtZ = Z.T @ Z
-            double *ZtZ = (double *)malloc(z_dim * z_dim * sizeof(double));
-            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                        z_dim, z_dim, N, 1.0, Z, z_dim, Z, z_dim, 0.0, ZtZ, z_dim);
-            
-            // norm(ZtZ, 2)
-            double *ZtZ_copy = (double *)malloc(z_dim * z_dim * sizeof(double));
-            memcpy(ZtZ_copy, ZtZ, z_dim * z_dim * sizeof(double));
-            double *S_ztz = (double *)malloc(z_dim * sizeof(double));
-            LAPACKE_dgesdd(LAPACK_ROW_MAJOR, 'N', z_dim, z_dim, ZtZ_copy, z_dim, S_ztz, NULL, 1, NULL, 1);
-            
-            double norm_ZtZ = S_ztz[0];
-            double eps = 2.2204460492503131e-16;
-            double ridge_auto = eps * z_dim * norm_ZtZ;
-
-            for (int i = 0; i < z_dim; i++) ZtZ[i * z_dim + i] += ridge_auto;
-
-            double *ZtU = (double *)malloc(z_dim * target_dim * sizeof(double));
-            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                        z_dim, target_dim, N, 1.0, Z, z_dim, U_latent, target_dim, 0.0, ZtU, target_dim);
-            
-            LAPACKE_dposv(LAPACK_ROW_MAJOR, 'U', z_dim, target_dim, ZtZ, z_dim, ZtU, target_dim);
-            memcpy(B_latent, ZtU, z_dim * target_dim * sizeof(double));
-
-            free(ZtZ); free(ZtZ_copy); free(S_ztz); free(ZtU);
+            double eps = DBL_EPSILON;
+            if (N < z_dim) {
+                // Dual ridge regression: B = Z^T (Z Z^T + lambda I)^-1 U
+                double *ZZt = (double *)malloc(N * N * sizeof(double));
+                if (!ZZt) { fprintf(stderr, "Failed to allocate ZZt (%d x %d)\n", (int)N, (int)N); exit(1); }
+                cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                            N, N, z_dim, 1.0, Z, z_dim, Z, z_dim, 0.0, ZZt, N);
+                
+                double *ZZt_copy = (double *)malloc(N * N * sizeof(double));
+                if (!ZZt_copy) { fprintf(stderr, "Failed to allocate ZZt_copy\n"); exit(1); }
+                memcpy(ZZt_copy, ZZt, N * N * sizeof(double));
+                double *S_zzt = (double *)malloc(N * sizeof(double));
+                LAPACKE_dgesdd(LAPACK_ROW_MAJOR, 'N', N, N, ZZt_copy, N, S_zzt, NULL, 1, NULL, 1);
+                
+                double norm_ZZt = S_zzt[0];
+                double ridge_auto = eps * z_dim * norm_ZZt;
+                
+                for (int i = 0; i < N; i++) ZZt[i * N + i] += ridge_auto;
+                
+                double *M = (double *)malloc(N * target_dim * sizeof(double));
+                if (!M) { fprintf(stderr, "Failed to allocate M\n"); exit(1); }
+                memcpy(M, U_latent, N * target_dim * sizeof(double));
+                
+                // M = (Z Z^T + lambda I)^-1 U_latent
+                LAPACKE_dposv(LAPACK_ROW_MAJOR, 'U', N, target_dim, ZZt, N, M, target_dim);
+                
+                // B_latent = Z^T M
+                cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                            z_dim, target_dim, N, 1.0, Z, z_dim, M, target_dim, 0.0, B_latent, target_dim);
+                
+                free(ZZt); free(ZZt_copy); free(S_zzt); free(M);
+            } else {
+                // Primal ridge regression: B = (Z^T Z + lambda I)^-1 Z^T U
+                double *ZtZ = (double *)malloc(z_dim * z_dim * sizeof(double));
+                if (!ZtZ) { fprintf(stderr, "Failed to allocate ZtZ (%d x %d)\n", z_dim, z_dim); exit(1); }
+                cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                            z_dim, z_dim, N, 1.0, Z, z_dim, Z, z_dim, 0.0, ZtZ, z_dim);
+                
+                double *ZtZ_copy = (double *)malloc(z_dim * z_dim * sizeof(double));
+                if (!ZtZ_copy) { fprintf(stderr, "Failed to allocate ZtZ_copy\n"); exit(1); }
+                memcpy(ZtZ_copy, ZtZ, z_dim * z_dim * sizeof(double));
+                double *S_ztz = (double *)malloc(z_dim * sizeof(double));
+                LAPACKE_dgesdd(LAPACK_ROW_MAJOR, 'N', z_dim, z_dim, ZtZ_copy, z_dim, S_ztz, NULL, 1, NULL, 1);
+                
+                double norm_ZtZ = S_ztz[0];
+                double ridge_auto = eps * z_dim * norm_ZtZ;
+    
+                for (int i = 0; i < z_dim; i++) ZtZ[i * z_dim + i] += ridge_auto;
+    
+                double *ZtU = (double *)malloc(z_dim * target_dim * sizeof(double));
+                cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                            z_dim, target_dim, N, 1.0, Z, z_dim, U_latent, target_dim, 0.0, ZtU, target_dim);
+                
+                LAPACKE_dposv(LAPACK_ROW_MAJOR, 'U', z_dim, target_dim, ZtZ, z_dim, ZtU, target_dim);
+                memcpy(B_latent, ZtU, z_dim * target_dim * sizeof(double));
+    
+                free(ZtZ); free(ZtZ_copy); free(S_ztz); free(ZtU);
+            }
         } else {
             // Pseudo-inverse
             solve_least_squares_double(Z, U_latent, B_latent, N, z_dim, target_dim);
         }
+        printf("Regression completed.\n");
 
         if (!y_pca_mode && laplacian_lambda > 0) {
             printf("Applying laplacian smoothing...\n");
@@ -516,6 +557,7 @@ int main(int argc, char **argv) {
             printf("WFS PC number set to %d\n", nx);
         }
         if (nx > min_dim_X) nx = min_dim_X;
+        printf("PCA on X completed.\n");
 
         float *PCx = (float *)malloc(P_X * nx * sizeof(float));
         for (long p = 0; p < P_X; p++) {
@@ -557,17 +599,21 @@ int main(int argc, char **argv) {
                         N, ny, P_Y, 1.0f, Y, P_Y, PCy, ny, 0.0f, U_latent, ny);
 
             free(Yc_copy); free(S_y); free(U_y); free(Vt_y);
+            printf("PCA on Y completed.\n");
         } else {
             U_latent = Y; 
         }
 
         int z_dim = use_quadratic ? (nx + nx*(nx+1)/2) : nx;
         float *Z = (float *)malloc(N * z_dim * sizeof(float));
+        if (!Z) { fprintf(stderr, "Failed to allocate Z (N=%d, z_dim=%d)\n", (int)N, z_dim); exit(1); }
+        printf("Starting quadratic expansion (z_dim=%d)...\n", z_dim);
         if (use_quadratic) {
             quadratic_expand_float(T, Z, N, nx);
         } else {
             memcpy(Z, T, N * nx * sizeof(float));
         }
+        printf("Quadratic expansion completed.\n");
 
         int y_pca_mode = (ny > 0);
         if (!y_pca_mode && noise_std > 0) {
@@ -576,35 +622,71 @@ int main(int argc, char **argv) {
             }
         }
 
+        printf("Starting regression...\n");
         float *B_latent = (float *)malloc(z_dim * target_dim * sizeof(float));
+        if (!B_latent) { fprintf(stderr, "Failed to allocate B_latent (%d x %d)\n", z_dim, target_dim); exit(1); }
         
         if (reg_mode) {
-            float *ZtZ = (float *)malloc(z_dim * z_dim * sizeof(float));
-            cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                        z_dim, z_dim, N, 1.0f, Z, z_dim, Z, z_dim, 0.0f, ZtZ, z_dim);
-            
-            float *ZtZ_copy = (float *)malloc(z_dim * z_dim * sizeof(float));
-            memcpy(ZtZ_copy, ZtZ, z_dim * z_dim * sizeof(float));
-            float *S_ztz = (float *)malloc(z_dim * sizeof(float));
-            LAPACKE_sgesdd(LAPACK_ROW_MAJOR, 'N', z_dim, z_dim, ZtZ_copy, z_dim, S_ztz, NULL, 1, NULL, 1);
-            
-            float norm_ZtZ = S_ztz[0];
-            float eps = 1.1920929e-07f;
-            float ridge_auto = eps * z_dim * norm_ZtZ;
-
-            for (int i = 0; i < z_dim; i++) ZtZ[i * z_dim + i] += ridge_auto;
-
-            float *ZtU = (float *)malloc(z_dim * target_dim * sizeof(float));
-            cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                        z_dim, target_dim, N, 1.0f, Z, z_dim, U_latent, target_dim, 0.0f, ZtU, target_dim);
-            
-            LAPACKE_sposv(LAPACK_ROW_MAJOR, 'U', z_dim, target_dim, ZtZ, z_dim, ZtU, target_dim);
-            memcpy(B_latent, ZtU, z_dim * target_dim * sizeof(float));
-
-            free(ZtZ); free(ZtZ_copy); free(S_ztz); free(ZtU);
+            float eps = FLT_EPSILON;
+            if (N < z_dim) {
+                // Dual ridge regression: B = Z^T (Z Z^T + lambda I)^-1 U
+                float *ZZt = (float *)malloc(N * N * sizeof(float));
+                if (!ZZt) { fprintf(stderr, "Failed to allocate ZZt (%d x %d)\n", (int)N, (int)N); exit(1); }
+                cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                            N, N, z_dim, 1.0f, Z, z_dim, Z, z_dim, 0.0f, ZZt, N);
+                
+                float *ZZt_copy = (float *)malloc(N * N * sizeof(float));
+                if (!ZZt_copy) { fprintf(stderr, "Failed to allocate ZZt_copy\n"); exit(1); }
+                memcpy(ZZt_copy, ZZt, N * N * sizeof(float));
+                float *S_zzt = (float *)malloc(N * sizeof(float));
+                LAPACKE_sgesdd(LAPACK_ROW_MAJOR, 'N', N, N, ZZt_copy, N, S_zzt, NULL, 1, NULL, 1);
+                
+                float norm_ZZt = S_zzt[0];
+                float ridge_auto = eps * z_dim * norm_ZZt;
+                
+                for (int i = 0; i < N; i++) ZZt[i * N + i] += ridge_auto;
+                
+                float *M = (float *)malloc(N * target_dim * sizeof(float));
+                if (!M) { fprintf(stderr, "Failed to allocate M\n"); exit(1); }
+                memcpy(M, U_latent, N * target_dim * sizeof(float));
+                
+                LAPACKE_sposv(LAPACK_ROW_MAJOR, 'U', N, target_dim, ZZt, N, M, target_dim);
+                
+                cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                            z_dim, target_dim, N, 1.0f, Z, z_dim, M, target_dim, 0.0f, B_latent, target_dim);
+                
+                free(ZZt); free(ZZt_copy); free(S_zzt); free(M);
+            } else {
+                // Primal ridge regression: B = (Z^T Z + lambda I)^-1 Z^T U
+                float *ZtZ = (float *)malloc(z_dim * z_dim * sizeof(float));
+                if (!ZtZ) { fprintf(stderr, "Failed to allocate ZtZ (%d x %d)\n", z_dim, z_dim); exit(1); }
+                cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                            z_dim, z_dim, N, 1.0f, Z, z_dim, Z, z_dim, 0.0f, ZtZ, z_dim);
+                
+                float *ZtZ_copy = (float *)malloc(z_dim * z_dim * sizeof(float));
+                if (!ZtZ_copy) { fprintf(stderr, "Failed to allocate ZtZ_copy\n"); exit(1); }
+                memcpy(ZtZ_copy, ZtZ, z_dim * z_dim * sizeof(float));
+                float *S_ztz = (float *)malloc(z_dim * sizeof(float));
+                LAPACKE_sgesdd(LAPACK_ROW_MAJOR, 'N', z_dim, z_dim, ZtZ_copy, z_dim, S_ztz, NULL, 1, NULL, 1);
+                
+                float norm_ZtZ = S_ztz[0];
+                float ridge_auto = eps * z_dim * norm_ZtZ;
+    
+                for (int i = 0; i < z_dim; i++) ZtZ[i * z_dim + i] += ridge_auto;
+    
+                float *ZtU = (float *)malloc(z_dim * target_dim * sizeof(float));
+                cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                            z_dim, target_dim, N, 1.0f, Z, z_dim, U_latent, target_dim, 0.0f, ZtU, target_dim);
+                
+                LAPACKE_sposv(LAPACK_ROW_MAJOR, 'U', z_dim, target_dim, ZtZ, z_dim, ZtU, target_dim);
+                memcpy(B_latent, ZtU, z_dim * target_dim * sizeof(float));
+    
+                free(ZtZ); free(ZtZ_copy); free(S_ztz); free(ZtU);
+            }
         } else {
             solve_least_squares_float(Z, U_latent, B_latent, N, z_dim, target_dim);
         }
+        printf("Regression completed.\n");
 
         if (!y_pca_mode && laplacian_lambda > 0) {
             printf("Applying laplacian smoothing...\n");
