@@ -516,6 +516,18 @@ int main(int argc, char *argv[]) {
 
         printf("--- Pass 1 Complete ---\n");
 
+        // Write Eigenvalues
+        FILE *feig = fopen("ipca.eigenvalues.txt", "w");
+        if (feig) {
+            for(int k=0; k<npca; k++) {
+                fprintf(feig, "%.6g\n", S[k]*S[k]);
+            }
+            fclose(feig);
+            printf("Wrote ipca.eigenvalues.txt\n");
+        } else {
+            fprintf(stderr, "Warning: Could not write ipca.eigenvalues.txt\n");
+        }
+
         printf("Writing Modes to %s...\n", modes_file);
         write_fits_3d_float(modes_file, V, xa, ya, npca);
 
@@ -672,6 +684,18 @@ int main(int argc, char *argv[]) {
         }
 
         printf("--- Pass 1 Complete ---\n");
+
+        // Write Eigenvalues
+        FILE *feig = fopen("ipca.eigenvalues.txt", "w");
+        if (feig) {
+            for(int k=0; k<npca; k++) {
+                fprintf(feig, "%.15g\n", S[k]*S[k]);
+            }
+            fclose(feig);
+            printf("Wrote ipca.eigenvalues.txt\n");
+        } else {
+            fprintf(stderr, "Warning: Could not write ipca.eigenvalues.txt\n");
+        }
 
         printf("Writing Modes to %s...\n", modes_file);
         write_fits_3d(modes_file, V, xa, ya, npca);
