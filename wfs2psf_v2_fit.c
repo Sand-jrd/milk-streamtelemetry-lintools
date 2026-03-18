@@ -388,7 +388,6 @@ int main(int argc, char **argv) {
         }
         printf("Quadratic expansion completed.\n");
 
-        int y_pca_mode = (ny > 0);
         if (!y_pca_mode && noise_std > 0) {
             for (int i = 0; i < N * z_dim; i++) {
                 Z[i] += rand_normal() * noise_std;
@@ -763,7 +762,7 @@ int main(int argc, char **argv) {
         write_fits_2d_float(path, PCx, nx, P_X); 
 
         snprintf(path, 1024, "%s_PCy_local.fits", out_prefix);
-        write_fits_2d_float(path, PCy_global, (long)patch_pixels * ny_per_patch, (long)n_patches);
+        if (y_pca_mode) write_fits_2d_float(path, PCy_global, (long)patch_pixels * ny_per_patch, (long)n_patches);
 
         snprintf(path, 1024, "%s_Xmean.fits", out_prefix);
         write_fits_2d_float(path, X_mean, P_X, 1);
@@ -783,11 +782,12 @@ int main(int argc, char **argv) {
         fprintf(fp, "ny_per_patch %d\n", ny_per_patch);
         fprintf(fp, "nxp %d\n", nxp);
         fprintf(fp, "nyp %d\n", nyp);
+        fprintf(fp, "y_pca_mode %d\n", y_pca_mode);
         fclose(fp);
 
         free(X); free(Y); free(X_mean); free(Y_mean); free(X_std); free(Y_std);
         free(Xc_copy); free(S_x); free(U_x); free(Vt_x); free(PCx); free(T); 
-        free(Z); free(B_latent); free(PCy_global); free(U_latent);
+        free(Z); free(B_latent); if (y_pca_mode) free(PCy_global); free(U_latent);
     }
 
     return 0;
