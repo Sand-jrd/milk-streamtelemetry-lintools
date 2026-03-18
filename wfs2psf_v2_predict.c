@@ -245,6 +245,7 @@ int main(int argc, char **argv) {
             for (int py = 0; py < nyp; py++) {
                 for (int px = 0; px < nxp; px++) {
                     int patch_idx = py * nxp + px;
+                    float *U_patch = &U_pred[i * target_dim + patch_idx * ny_per_patch];
                     if (y_pca_mode) {
                         float *PCy_patch = &PCy_local[patch_idx * (patch_pixels * ny_per_patch)];
                         for (int dy = 0; dy < patchsize; dy++) {
