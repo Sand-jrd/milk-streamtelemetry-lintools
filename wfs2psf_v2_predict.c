@@ -90,8 +90,9 @@ int main(int argc, char **argv) {
         snprintf(path, 1024, "%s_B_latent.fits", model_prefix);
         long z_dim, target_dim;
         read_fits(path, &B_latent, &z_dim, &target_dim, &xa, &ya, &nax);
-        
-        int patchsize, ny_per_patch, nxp, nyp;
+
+        // Load v2 info
+        int patchsize, ny_per_patch, nxp, nyp, y_pca_mode = 1;
         snprintf(path, 1024, "%s_v2_info.txt", model_prefix);
         FILE *fp = fopen(path, "r");
         if (!fp) { fprintf(stderr, "Error: %s not found. Model might not be v2.\n", path); exit(1); }
@@ -99,11 +100,14 @@ int main(int argc, char **argv) {
         fscanf(fp, "ny_per_patch %d\n", &ny_per_patch);
         fscanf(fp, "nxp %d\n", &nxp);
         fscanf(fp, "nyp %d\n", &nyp);
+        if (fscanf(fp, "y_pca_mode %d\n", &y_pca_mode) != 1) y_pca_mode = 1; // Default to 1 for older v2 models
         fclose(fp);
 
-        snprintf(path, 1024, "%s_PCy_local.fits", model_prefix);
-        long n_p_l, p_dim_l;
-        read_fits(path, &PCy_local, &n_p_l, &p_dim_l, &xa, &ya, &nax);
+        if (y_pca_mode) {
+            snprintf(path, 1024, "%s_PCy_local.fits", model_prefix);
+            long n_p_l, p_dim_l;
+            read_fits(path, &PCy_local, &n_p_l, &p_dim_l, &xa, &ya, &nax);
+        }
 
         for (long i = 0; i < N; i++) {
             for (long j = 0; j < P_X; j++) {
@@ -131,15 +135,24 @@ int main(int argc, char **argv) {
                 for (int px = 0; px < nxp; px++) {
                     int patch_idx = py * nxp + px;
                     double *U_patch = &U_pred[i * target_dim + patch_idx * ny_per_patch];
-                    double *PCy_patch = &PCy_local[patch_idx * (patch_pixels * ny_per_patch)];
-                    for (int dy = 0; dy < patchsize; dy++) {
-                        for (int dx = 0; dx < patchsize; dx++) {
-                            double val = 0;
-                            int pixel_idx = dy * patchsize + dx;
-                            for (int k = 0; k < ny_per_patch; k++) {
-                                val += U_patch[k] * PCy_patch[pixel_idx * ny_per_patch + k];
+                    if (y_pca_mode) {
+                        double *PCy_patch = &PCy_local[patch_idx * (patch_pixels * ny_per_patch)];
+                        for (int dy = 0; dy < patchsize; dy++) {
+                            for (int dx = 0; dx < patchsize; dx++) {
+                                double val = 0;
+                                int pixel_idx = dy * patchsize + dx;
+                                for (int k = 0; k < ny_per_patch; k++) {
+                                    val += U_patch[k] * PCy_patch[pixel_idx * ny_per_patch + k];
+                                }
+                                Y_new[i * P_Y + (py * patchsize + dy) * xa_y + (px * patchsize + dx)] = val;
                             }
-                            Y_new[i * P_Y + (py * patchsize + dy) * xa_y + (px * patchsize + dx)] = val;
+                        }
+                    } else {
+                        // Raw pixels
+                        for (int k = 0; k < patch_pixels; k++) {
+                            int dy = k / patchsize;
+                            int dx = k % patchsize;
+                            Y_new[i * P_Y + (py * patchsize + dy) * xa_y + (px * patchsize + dx)] = U_patch[k];
                         }
                     }
                 }
@@ -188,8 +201,9 @@ int main(int argc, char **argv) {
         snprintf(path, 1024, "%s_B_latent.fits", model_prefix);
         long z_dim, target_dim;
         read_fits_float(path, &B_latent, &z_dim, &target_dim, &xa, &ya, &nax);
-        
-        int patchsize, ny_per_patch, nxp, nyp;
+
+        // Load v2 info
+        int patchsize, ny_per_patch, nxp, nyp, y_pca_mode = 1;
         snprintf(path, 1024, "%s_v2_info.txt", model_prefix);
         FILE *fp = fopen(path, "r");
         if (!fp) { fprintf(stderr, "Error: %s not found. Model might not be v2.\n", path); exit(1); }
@@ -197,11 +211,14 @@ int main(int argc, char **argv) {
         fscanf(fp, "ny_per_patch %d\n", &ny_per_patch);
         fscanf(fp, "nxp %d\n", &nxp);
         fscanf(fp, "nyp %d\n", &nyp);
+        if (fscanf(fp, "y_pca_mode %d\n", &y_pca_mode) != 1) y_pca_mode = 1;
         fclose(fp);
 
-        snprintf(path, 1024, "%s_PCy_local.fits", model_prefix);
-        long n_p_l, p_dim_l;
-        read_fits_float(path, &PCy_local, &n_p_l, &p_dim_l, &xa, &ya, &nax);
+        if (y_pca_mode) {
+            snprintf(path, 1024, "%s_PCy_local.fits", model_prefix);
+            long n_p_l, p_dim_l;
+            read_fits_float(path, &PCy_local, &n_p_l, &p_dim_l, &xa, &ya, &nax);
+        }
 
         for (long i = 0; i < N; i++) {
             for (long j = 0; j < P_X; j++) {
@@ -228,16 +245,23 @@ int main(int argc, char **argv) {
             for (int py = 0; py < nyp; py++) {
                 for (int px = 0; px < nxp; px++) {
                     int patch_idx = py * nxp + px;
-                    float *U_patch = &U_pred[i * target_dim + patch_idx * ny_per_patch];
-                    float *PCy_patch = &PCy_local[patch_idx * (patch_pixels * ny_per_patch)];
-                    for (int dy = 0; dy < patchsize; dy++) {
-                        for (int dx = 0; dx < patchsize; dx++) {
-                            float val = 0;
-                            int pixel_idx = dy * patchsize + dx;
-                            for (int k = 0; k < ny_per_patch; k++) {
-                                val += U_patch[k] * PCy_patch[pixel_idx * ny_per_patch + k];
+                    if (y_pca_mode) {
+                        float *PCy_patch = &PCy_local[patch_idx * (patch_pixels * ny_per_patch)];
+                        for (int dy = 0; dy < patchsize; dy++) {
+                            for (int dx = 0; dx < patchsize; dx++) {
+                                float val = 0;
+                                int pixel_idx = dy * patchsize + dx;
+                                for (int k = 0; k < ny_per_patch; k++) {
+                                    val += U_patch[k] * PCy_patch[pixel_idx * ny_per_patch + k];
+                                }
+                                Y_new[i * P_Y + (py * patchsize + dy) * xa_y + (px * patchsize + dx)] = val;
                             }
-                            Y_new[i * P_Y + (py * patchsize + dy) * xa_y + (px * patchsize + dx)] = val;
+                        }
+                    } else {
+                        for (int k = 0; k < patch_pixels; k++) {
+                            int dy = k / patchsize;
+                            int dx = k % patchsize;
+                            Y_new[i * P_Y + (py * patchsize + dy) * xa_y + (px * patchsize + dx)] = U_patch[k];
                         }
                     }
                 }

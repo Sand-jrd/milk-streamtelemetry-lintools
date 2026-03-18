@@ -146,7 +146,7 @@ void print_help(const char *prog) {
     printf("Usage: %s <X_file.fits> <Y_file.fits> <out_prefix> [options]\n", prog);
     printf("Options:\n");
     printf("  -nx <int>             n_components_x (default: 10, -1 for auto)\n");
-    printf("  -ny <int>             n_components_y per patch (default: 5)\n");
+    printf("  -ny <int>             n_components_y per patch (default: 5, 0 for raw pixels)\n");
     printf("  -patchsize <int>      PSF patch size (default: 16)\n");
     printf("  -noscale              Disable scaling (default: enabled)\n");
     printf("  -noquad               Disable quadratic expansion (default: enabled)\n");
@@ -305,13 +305,16 @@ int main(int argc, char **argv) {
         int nxp = xa_y / patchsize;
         int nyp = ya_y / patchsize;
         int n_patches = nxp * nyp;
-        int ny_per_patch = ny;
         int patch_pixels = patchsize * patchsize;
+        int ny_per_patch = (ny <= 0) ? patch_pixels : ny;
+        int y_pca_mode = (ny > 0);
 
-        printf("Local PCA on PSF: %d patches (%dx%d each), ny=%d per patch\n", n_patches, patchsize, patchsize, ny_per_patch);
+        printf("Local processing on PSF: %d patches (%dx%d each), ny=%d per patch (%s)\n", 
+               n_patches, patchsize, patchsize, ny_per_patch, y_pca_mode ? "PCA" : "Raw Pixels");
+        
         target_dim_total = n_patches * ny_per_patch;
         U_latent = (double *)malloc(N * target_dim_total * sizeof(double));
-        PCy_global = (double *)malloc(n_patches * patch_pixels * ny_per_patch * sizeof(double));
+        if (y_pca_mode) PCy_global = (double *)malloc(n_patches * patch_pixels * ny_per_patch * sizeof(double));
 
         for (int py = 0; py < nyp; py++) {
             for (int px = 0; px < nxp; px++) {
@@ -326,41 +329,49 @@ int main(int argc, char **argv) {
                     }
                 }
 
-                // PCA on Y_patch
-                double *Yc_patch = (double *)malloc(N * patch_pixels * sizeof(double));
-                memcpy(Yc_patch, Y_patch, N * patch_pixels * sizeof(double));
-                int min_dim_patch = N < patch_pixels ? N : patch_pixels;
-                double *S_p = (double *)malloc(min_dim_patch * sizeof(double));
-                double *U_p = (double *)malloc(N * min_dim_patch * sizeof(double));
-                double *Vt_p = (double *)malloc(min_dim_patch * patch_pixels * sizeof(double));
-                LAPACKE_dgesdd(LAPACK_ROW_MAJOR, 'S', N, patch_pixels, Yc_patch, patch_pixels, S_p, U_p, min_dim_patch, Vt_p, patch_pixels);
+                if (y_pca_mode) {
+                    // PCA on Y_patch
+                    double *Yc_patch = (double *)malloc(N * patch_pixels * sizeof(double));
+                    memcpy(Yc_patch, Y_patch, N * patch_pixels * sizeof(double));
+                    int min_dim_patch = N < patch_pixels ? N : patch_pixels;
+                    double *S_p = (double *)malloc(min_dim_patch * sizeof(double));
+                    double *U_p = (double *)malloc(N * min_dim_patch * sizeof(double));
+                    double *Vt_p = (double *)malloc(min_dim_patch * patch_pixels * sizeof(double));
+                    LAPACKE_dgesdd(LAPACK_ROW_MAJOR, 'S', N, patch_pixels, Yc_patch, patch_pixels, S_p, U_p, min_dim_patch, Vt_p, patch_pixels);
 
-                int ny_this = ny_per_patch > min_dim_patch ? min_dim_patch : ny_per_patch;
-                
-                // Store basis in PCy_global at offset
-                for (int p = 0; p < patch_pixels; p++) {
-                    for (int k = 0; k < ny_this; k++) {
-                        PCy_global[patch_idx * (patch_pixels * ny_per_patch) + p * ny_per_patch + k] = Vt_p[k * patch_pixels + p];
+                    int ny_this = ny_per_patch > min_dim_patch ? min_dim_patch : ny_per_patch;
+                    
+                    // Store basis in PCy_global at offset
+                    for (int p = 0; p < patch_pixels; p++) {
+                        for (int k = 0; k < ny_this; k++) {
+                            PCy_global[patch_idx * (patch_pixels * ny_per_patch) + p * ny_per_patch + k] = Vt_p[k * patch_pixels + p];
+                        }
+                    }
+
+                    // Compute coefficients U_patch = Y_patch @ PCy_patch
+                    double *PCy_this = &PCy_global[patch_idx * (patch_pixels * ny_per_patch)];
+                    double *U_this = (double *)malloc(N * ny_per_patch * sizeof(double));
+                    memset(U_this, 0, N * ny_per_patch * sizeof(double));
+
+                    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, N, ny_this, patch_pixels, 1.0, Y_patch, patch_pixels, PCy_this, ny_per_patch, 0.0, U_this, ny_per_patch);
+
+                    // Copy to U_latent
+                    for (int i = 0; i < N; i++) {
+                        for (int k = 0; k < ny_per_patch; k++) {
+                            U_latent[i * target_dim_total + patch_idx * ny_per_patch + k] = U_this[i * ny_per_patch + k];
+                        }
+                    }
+                    free(Yc_patch); free(S_p); free(U_p); free(Vt_p); free(U_this);
+                } else {
+                    // No PCA, use raw pixels
+                    for (int i = 0; i < N; i++) {
+                        for (int k = 0; k < patch_pixels; k++) {
+                            U_latent[i * target_dim_total + patch_idx * patch_pixels + k] = Y_patch[i * patch_pixels + k];
+                        }
                     }
                 }
-                // If ny_per_patch > min_dim_patch, rest is already 0 from calloc? No, malloc above.
-                // Let's zero out if needed, but usually ny is small.
 
-                // Compute coefficients U_patch = Y_patch @ PCy_patch
-                double *PCy_this = &PCy_global[patch_idx * (patch_pixels * ny_per_patch)];
-                double *U_this = (double *)malloc(N * ny_per_patch * sizeof(double));
-                memset(U_this, 0, N * ny_per_patch * sizeof(double));
-
-                cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, N, ny_this, patch_pixels, 1.0, Y_patch, patch_pixels, PCy_this, ny_per_patch, 0.0, U_this, ny_per_patch);
-
-                // Copy to U_latent
-                for (int i = 0; i < N; i++) {
-                    for (int k = 0; k < ny_per_patch; k++) {
-                        U_latent[i * target_dim_total + patch_idx * ny_per_patch + k] = U_this[i * ny_per_patch + k];
-                    }
-                }
-
-                free(Y_patch); free(Yc_patch); free(S_p); free(U_p); free(Vt_p); free(U_this);
+                free(Y_patch);
             }
         }
         int target_dim = target_dim_total;
@@ -479,7 +490,7 @@ int main(int argc, char **argv) {
         write_fits_2d(path, PCx, nx, P_X); 
 
         snprintf(path, 1024, "%s_PCy_local.fits", out_prefix);
-        write_fits_2d(path, PCy_global, (long)patch_pixels * ny_per_patch, (long)n_patches);
+        if (y_pca_mode) write_fits_2d(path, PCy_global, (long)patch_pixels * ny_per_patch, (long)n_patches);
 
         snprintf(path, 1024, "%s_Xmean.fits", out_prefix);
         write_fits_2d(path, X_mean, P_X, 1);
@@ -505,12 +516,14 @@ int main(int argc, char **argv) {
         fprintf(fp, "ny_per_patch %d\n", ny_per_patch);
         fprintf(fp, "nxp %d\n", nxp);
         fprintf(fp, "nyp %d\n", nyp);
+        fprintf(fp, "y_pca_mode %d\n", y_pca_mode);
         fclose(fp);
 
         free(X); free(Y); free(X_mean); free(Y_mean); free(X_std); free(Y_std);
         free(Xc_copy); free(S_x); free(U_x); free(Vt_x); free(PCx); free(T); 
         free(Z); free(B_latent);
-        free(PCy_global); free(U_latent);
+        if (y_pca_mode) free(PCy_global);
+        free(U_latent);
     } else {
         // ===================================
         // SINGLE PRECISION PATH
@@ -620,13 +633,16 @@ int main(int argc, char **argv) {
         int nxp = xa_y / patchsize;
         int nyp = ya_y / patchsize;
         int n_patches = nxp * nyp;
-        int ny_per_patch = ny;
         int patch_pixels = patchsize * patchsize;
+        int ny_per_patch = (ny <= 0) ? patch_pixels : ny;
+        int y_pca_mode = (ny > 0);
 
-        printf("Local PCA on PSF: %d patches (%dx%d), ny=%d per patch\n", n_patches, patchsize, patchsize, ny_per_patch);
+        printf("Local processing on PSF (float): %d patches (%dx%d), ny=%d (%s)\n", 
+               n_patches, patchsize, patchsize, ny_per_patch, y_pca_mode ? "PCA" : "Raw Pixels");
+        
         target_dim_total = n_patches * ny_per_patch;
         U_latent = (float *)malloc(N * target_dim_total * sizeof(float));
-        PCy_global = (float *)malloc(n_patches * patch_pixels * ny_per_patch * sizeof(float));
+        if (y_pca_mode) PCy_global = (float *)malloc(n_patches * patch_pixels * ny_per_patch * sizeof(float));
 
         for (int py = 0; py < nyp; py++) {
             for (int px = 0; px < nxp; px++) {
@@ -640,32 +656,41 @@ int main(int argc, char **argv) {
                     }
                 }
 
-                float *Yc_patch = (float *)malloc(N * patch_pixels * sizeof(float));
-                memcpy(Yc_patch, Y_patch, N * patch_pixels * sizeof(float));
-                int min_dim_patch = N < patch_pixels ? N : patch_pixels;
-                float *S_p = (float *)malloc(min_dim_patch * sizeof(float));
-                float *U_p = (float *)malloc(N * min_dim_patch * sizeof(float));
-                float *Vt_p = (float *)malloc(min_dim_patch * patch_pixels * sizeof(float));
-                LAPACKE_sgesdd(LAPACK_ROW_MAJOR, 'S', N, patch_pixels, Yc_patch, patch_pixels, S_p, U_p, min_dim_patch, Vt_p, patch_pixels);
+                if (y_pca_mode) {
+                    float *Yc_patch = (float *)malloc(N * patch_pixels * sizeof(float));
+                    memcpy(Yc_patch, Y_patch, N * patch_pixels * sizeof(float));
+                    int min_dim_patch = N < patch_pixels ? N : patch_pixels;
+                    float *S_p = (float *)malloc(min_dim_patch * sizeof(float));
+                    float *U_p = (float *)malloc(N * min_dim_patch * sizeof(float));
+                    float *Vt_p = (float *)malloc(min_dim_patch * patch_pixels * sizeof(float));
+                    LAPACKE_sgesdd(LAPACK_ROW_MAJOR, 'S', N, patch_pixels, Yc_patch, patch_pixels, S_p, U_p, min_dim_patch, Vt_p, patch_pixels);
 
-                int ny_this = ny_per_patch > min_dim_patch ? min_dim_patch : ny_per_patch;
-                for (int p = 0; p < patch_pixels; p++) {
-                    for (int k = 0; k < ny_this; k++) {
-                        PCy_global[patch_idx * (patch_pixels * ny_per_patch) + p * ny_per_patch + k] = Vt_p[k * patch_pixels + p];
+                    int ny_this = ny_per_patch > min_dim_patch ? min_dim_patch : ny_per_patch;
+                    for (int p = 0; p < patch_pixels; p++) {
+                        for (int k = 0; k < ny_this; k++) {
+                            PCy_global[patch_idx * (patch_pixels * ny_per_patch) + p * ny_per_patch + k] = Vt_p[k * patch_pixels + p];
+                        }
+                    }
+
+                    float *PCy_this = &PCy_global[patch_idx * (patch_pixels * ny_per_patch)];
+                    float *U_this = (float *)malloc(N * ny_per_patch * sizeof(float));
+                    memset(U_this, 0, N * ny_per_patch * sizeof(float));
+                    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, N, ny_this, patch_pixels, 1.0f, Y_patch, patch_pixels, PCy_this, ny_per_patch, 0.0f, U_this, ny_per_patch);
+
+                    for (int i = 0; i < N; i++) {
+                        for (int k = 0; k < ny_per_patch; k++) {
+                            U_latent[i * target_dim_total + patch_idx * ny_per_patch + k] = U_this[i * ny_per_patch + k];
+                        }
+                    }
+                    free(Yc_patch); free(S_p); free(U_p); free(Vt_p); free(U_this);
+                } else {
+                    for (int i = 0; i < N; i++) {
+                        for (int k = 0; k < patch_pixels; k++) {
+                            U_latent[i * target_dim_total + patch_idx * patch_pixels + k] = Y_patch[i * patch_pixels + k];
+                        }
                     }
                 }
-
-                float *PCy_this = &PCy_global[patch_idx * (patch_pixels * ny_per_patch)];
-                float *U_this = (float *)malloc(N * ny_per_patch * sizeof(float));
-                memset(U_this, 0, N * ny_per_patch * sizeof(float));
-                cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, N, ny_this, patch_pixels, 1.0f, Y_patch, patch_pixels, PCy_this, ny_per_patch, 0.0f, U_this, ny_per_patch);
-
-                for (int i = 0; i < N; i++) {
-                    for (int k = 0; k < ny_per_patch; k++) {
-                        U_latent[i * target_dim_total + patch_idx * ny_per_patch + k] = U_this[i * ny_per_patch + k];
-                    }
-                }
-                free(Y_patch); free(Yc_patch); free(S_p); free(U_p); free(Vt_p); free(U_this);
+                free(Y_patch);
             }
         }
         int target_dim = target_dim_total;
