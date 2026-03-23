@@ -100,6 +100,21 @@ target_link_libraries(milk-streamtelemetry-pcaproj PRIVATE
     m
 )
 
+# PCA Projection Subtraction Program
+add_executable(milk-streamtelemetry-projsub proj_sub.c)
+target_include_directories(milk-streamtelemetry-projsub PRIVATE
+    ${CFITSIO_INCLUDE_DIRS}
+    ${OPENBLAS_INCLUDE_DIRS}
+    ${LAPACKE_INCLUDE_DIRS}
+)
+target_link_libraries(milk-streamtelemetry-projsub PRIVATE
+    common
+    ${CFITSIO_LIBRARIES}
+    ${OPENBLAS_LIBRARIES}
+    ${LAPACKE_LIBRARIES}
+    m
+)
+
 
 # Reconstruction Program
 add_executable(milk-streamtelemetry-recon recon.c)
@@ -236,6 +251,37 @@ target_link_libraries(milk-streamtelemetry-wfs2psf-predict-v2 PRIVATE
     m
 )
 
+# WFS2PSF Fit Program v3
+add_executable(milk-streamtelemetry-wfs2psf-fit-v3 wfs2psf_v3_fit.c)
+target_include_directories(milk-streamtelemetry-wfs2psf-fit-v3 PRIVATE
+    ${CFITSIO_INCLUDE_DIRS}
+    ${OPENBLAS_INCLUDE_DIRS}
+    ${LAPACKE_INCLUDE_DIRS}
+)
+target_link_libraries(milk-streamtelemetry-wfs2psf-fit-v3 PRIVATE
+    common
+    ${CFITSIO_LIBRARIES}
+    ${OPENBLAS_LIBRARIES}
+    ${LAPACKE_LIBRARIES}
+    m
+)
+
+# WFS2PSF Predict Program v3
+add_executable(milk-streamtelemetry-wfs2psf-predict-v3 wfs2psf_v3_predict.c)
+target_include_directories(milk-streamtelemetry-wfs2psf-predict-v3 PRIVATE
+    ${CFITSIO_INCLUDE_DIRS}
+    ${OPENBLAS_INCLUDE_DIRS}
+    ${LAPACKE_INCLUDE_DIRS}
+)
+target_link_libraries(milk-streamtelemetry-wfs2psf-predict-v3 PRIVATE
+    common
+    ${CFITSIO_LIBRARIES}
+    ${OPENBLAS_LIBRARIES}
+    ${LAPACKE_LIBRARIES}
+    m
+)
+
+
 install(TARGETS
     milk-streamtelemetry-cca
     milk-streamtelemetry-modeval
@@ -244,6 +290,7 @@ install(TARGETS
     milk-streamtelemetry-ipca
     milk-streamtelemetry-recon
     milk-streamtelemetry-pcamerge
+    milk-streamtelemetry-projsub
     milk-streamtelemetry-mkearthseq
     milk-streamtelemetry-3DFITS-to-png
     milk-streamtelemetry-fits2ascii
@@ -252,6 +299,8 @@ install(TARGETS
     milk-streamtelemetry-wfs2psf-predict
     milk-streamtelemetry-wfs2psf-fit-v2
     milk-streamtelemetry-wfs2psf-predict-v2
+    milk-streamtelemetry-wfs2psf-fit-v3
+    milk-streamtelemetry-wfs2psf-predict-v3
 
     DESTINATION /usr/local/milk/bin
 )
