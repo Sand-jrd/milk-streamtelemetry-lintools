@@ -9,12 +9,14 @@
 
 // Helper to expand T to Z (quadratic)
 void quadratic_expand_double(const double *T, double *Z, long n_samples, int nx) {
-    int z_dim = nx + nx*(nx+1)/2;
+    int z_dim = 1 + nx + nx * (nx + 1) / 2;
     for (long i = 0; i < n_samples; i++) {
         const double *t = &T[i * nx];
         double *z = &Z[i * z_dim];
         int idx = 0;
-        for (int j = 0; j < nx; j++) z[idx++] = t[j];
+        z[idx++] = 1.0; // Bias term
+        for (int j = 0; j < nx; j++)
+            z[idx++] = t[j];
         for (int j = 0; j < nx; j++)
             for (int k = j; k < nx; k++)
                 z[idx++] = t[j] * t[k];
@@ -61,13 +63,15 @@ void print_help(const char *prog) {
  */
 static void admm_qp_double(
     const double *Z,      // N x z_dim
-    const double *Y_lat,  // N x target_dim  (U_latent)
+    const double *Y_lat,  // N x target_dim  (residual U_latent)
     double *B,            // z_dim x target_dim  (output)
     int N, int z_dim, long target_dim,
-    double lambda, double epsilon, double rho, int admm_iters)
+    double lambda, double epsilon, double rho, int admm_iters,
+    const double *Y_mean_patch, // Mean of Y in this patch/basis
+    int y_pca_mode)
 {
-    printf("ADMM QP: N=%d z_dim=%d target_dim=%ld lambda=%g eps=%g rho=%g iters=%d\n",
-           N, z_dim, target_dim, lambda, epsilon, rho, admm_iters);
+    printf("ADMM QP: N=%d z_dim=%d target_dim=%ld lambda=%g eps=%g rho=%g iters=%d (PCA=%d)\n",
+           N, z_dim, target_dim, lambda, epsilon, rho, admm_iters, y_pca_mode);
 
     // --- Precompute Z^T Z ---
     double *ZtZ = (double *)malloc((long)z_dim * z_dim * sizeof(double));
@@ -137,10 +141,17 @@ static void admm_qp_double(
         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                     N, (int)target_dim, z_dim, 1.0, Z, z_dim, B, (int)target_dim, 0.0, ZB, (int)target_dim);
 
-        // --- S update: S = max((2*Y + rho*(ZB + U)) / (2+rho), -epsilon) ---
+        // --- S update ---
         for (long k = 0; k < NxT; k++) {
             double s_unc = (2.0 * Y_lat[k] + rho * (ZB[k] + U_admm[k])) / denom;
-            S[k] = s_unc < -epsilon ? -epsilon : s_unc;
+            double bound = -epsilon;
+            if (!y_pca_mode) {
+                // If regressing raw pixels, enforce Total_PSF >= -epsilon
+                // i.e., Residual >= -Mean - epsilon
+                // Y_mean_patch has length target_dim. k % target_dim is the pixel index.
+                bound = -Y_mean_patch[k % target_dim] - epsilon;
+            }
+            S[k] = s_unc < bound ? bound : s_unc;
         }
 
         // --- U update: U = U + ZB - S ---
@@ -230,11 +241,10 @@ int main(int argc, char **argv) {
     for (int i = 0; i < N; i++)
         for (long j = 0; j < P_X; j++) X[i * P_X + j] -= X_mean[j];
 
-    if (epsilon < 0) {
-        // Standard mode: also subtract Y mean (same as v2)
-        for (int i = 0; i < N; i++)
-            for (long j = 0; j < P_Y; j++) Y[i * P_Y + j] -= Y_mean[j];
-    }
+    // Subtract Y mean (Always do this, even in QP mode, so model learns residuals)
+    for (int i = 0; i < N; i++)
+        for (long j = 0; j < P_Y; j++)
+            Y[i * P_Y + j] -= Y_mean[j];
     // In QP/positivity mode: Y is NOT mean-subtracted (not divided by std either)
 
     // Scale X
@@ -345,7 +355,7 @@ int main(int argc, char **argv) {
     printf("Local PCA on Y done. target_dim=%ld\n", target_dim);
 
     // --- Quadratic expansion ---
-    int z_dim = use_quadratic ? (nx + nx*(nx+1)/2) : nx;
+    int z_dim = use_quadratic ? (1 + nx + nx * (nx + 1) / 2) : nx;
     double *Z = (double *)malloc((long)N * z_dim * sizeof(double));
     if (!Z) { fprintf(stderr, "Failed to alloc Z\n"); exit(1); }
     printf("Quadratic expansion (z_dim=%d)...\n", z_dim);
@@ -380,8 +390,30 @@ int main(int argc, char **argv) {
 
     if (epsilon >= 0) {
         // ADMM QP with positivity constraint
+        // Extract the part of Y_mean corresponding to the target_dim (patches)
+        double *Y_mean_latent = (double *)calloc(target_dim, sizeof(double));
+        if (y_pca_mode) {
+            // In PCA mode, Y_mean is already accounted for globally. 
+            // The coefficients U should be centered at 0.
+            // Positivity constraint on coefficients alone is just U >= -epsilon.
+        } else {
+            // Raw pixels: map global Y_mean to the concatenated target_dim vector
+            for (int py = 0; py < nyp; py++) {
+                for (int px = 0; px < nxp; px++) {
+                    int patch_idx = py * nxp + px;
+                    for (int dy = 0; dy < patchsize; dy++) {
+                        for (int dx = 0; dx < patchsize; dx++) {
+                            Y_mean_latent[patch_idx * patch_pixels + dy * patchsize + dx] =
+                                Y_mean[(py * patchsize + dy) * xa_y + (px * patchsize + dx)];
+                        }
+                    }
+                }
+            }
+        }
+
         admm_qp_double(Z, U_latent, B_latent, N, z_dim, target_dim,
-                       lambda, epsilon, admm_rho, admm_iters);
+                       lambda, epsilon, admm_rho, admm_iters, Y_mean_latent, y_pca_mode);
+        free(Y_mean_latent);
     } else {
         // Standard ridge (same as v2)
         double *ZtZ = (double *)malloc((long)z_dim * z_dim * sizeof(double));

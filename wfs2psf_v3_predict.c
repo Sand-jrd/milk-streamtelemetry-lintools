@@ -7,12 +7,14 @@
 #include "common.h"
 
 void quadratic_expand_double(const double *T, double *Z, long n_samples, int nx) {
-    int z_dim = nx + nx*(nx+1)/2;
+    int z_dim = 1 + nx + nx * (nx + 1) / 2;
     for (long i = 0; i < n_samples; i++) {
         const double *t = &T[i * nx];
         double *z = &Z[i * z_dim];
         int idx = 0;
-        for (int j = 0; j < nx; j++) z[idx++] = t[j];
+        z[idx++] = 1.0; // Bias term
+        for (int j = 0; j < nx; j++)
+            z[idx++] = t[j];
         for (int j = 0; j < nx; j++)
             for (int k = j; k < nx; k++)
                 z[idx++] = t[j] * t[k];
@@ -150,16 +152,14 @@ int main(int argc, char **argv) {
     }
 
     // Denormalize Y:
-    // - QP mode:     Y_fit was raw (no mean sub, no std div) -> only add back Y_mean
-    // - Standard:    Y_fit was normalized  -> multiply by Y_std, then add Y_mean
+    // Always add Y_mean to restore the signal level and fill margin pixels.
+    // Standard mode also multiplies by Y_std (Residuals only).
     for (long i = 0; i < (long)N; i++) {
         for (long j = 0; j < P_Y; j++) {
-            if (qp_mode) {
-                // No scaling was applied during fit
-                Y_new[i*P_Y+j] += Y_mean[j];
-            } else {
-                Y_new[i*P_Y+j] = Y_new[i*P_Y+j] * Y_std[j] + Y_mean[j];
+            if (!qp_mode) {
+                Y_new[i*P_Y+j] *= Y_std[j];
             }
+            Y_new[i*P_Y+j] += Y_mean[j];
         }
     }
 
