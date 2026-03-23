@@ -281,6 +281,36 @@ target_link_libraries(milk-streamtelemetry-wfs2psf-predict-v3 PRIVATE
     m
 )
 
+# WFS2PSF Fit Program v4
+add_executable(milk-streamtelemetry-wfs2psf-fit-v4 wfs2psf_v4_fit.c)
+target_include_directories(milk-streamtelemetry-wfs2psf-fit-v4 PRIVATE
+    ${CFITSIO_INCLUDE_DIRS}
+    ${OPENBLAS_INCLUDE_DIRS}
+    ${LAPACKE_INCLUDE_DIRS}
+)
+target_link_libraries(milk-streamtelemetry-wfs2psf-fit-v4 PRIVATE
+    common
+    ${CFITSIO_LIBRARIES}
+    ${OPENBLAS_LIBRARIES}
+    ${LAPACKE_LIBRARIES}
+    m
+)
+
+# WFS2PSF Predict Program v4
+add_executable(milk-streamtelemetry-wfs2psf-predict-v4 wfs2psf_v4_predict.c)
+target_include_directories(milk-streamtelemetry-wfs2psf-predict-v4 PRIVATE
+    ${CFITSIO_INCLUDE_DIRS}
+    ${OPENBLAS_INCLUDE_DIRS}
+    ${LAPACKE_INCLUDE_DIRS}
+)
+target_link_libraries(milk-streamtelemetry-wfs2psf-predict-v4 PRIVATE
+    common
+    ${CFITSIO_LIBRARIES}
+    ${OPENBLAS_LIBRARIES}
+    ${LAPACKE_LIBRARIES}
+    m
+)
+
 
 install(TARGETS
     milk-streamtelemetry-cca
@@ -301,6 +331,8 @@ install(TARGETS
     milk-streamtelemetry-wfs2psf-predict-v2
     milk-streamtelemetry-wfs2psf-fit-v3
     milk-streamtelemetry-wfs2psf-predict-v3
+    milk-streamtelemetry-wfs2psf-fit-v4
+    milk-streamtelemetry-wfs2psf-predict-v4
 
     DESTINATION /usr/local/milk/bin
 )
