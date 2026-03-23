@@ -15,47 +15,79 @@ void expand_v4_double(const double *T, double *Z, long n_samples, int nx) {
 }
 
 static void solve_v4_pixel(
-    const double *X, const double *Y_pix,
+    const double *X, const double *Y_pix_raw,
     double *b_re, double *b_im,
     int N, int nx_eff, int iters, double lr, double lambda)
 {
-    // Spectral Initialization
+    // 1. Internal Normalization of Y to prevent gradient explosion
+    double y_mean = 0;
+    for (int i = 0; i < N; i++) y_mean += Y_pix_raw[i];
+    y_mean /= N;
+    if (y_mean < 1e-15) {
+        memset(b_re, 0, nx_eff * sizeof(double));
+        memset(b_im, 0, nx_eff * sizeof(double));
+        return;
+    }
+
+    double *Y_pix = (double *)malloc(N * sizeof(double));
+    for (int i = 0; i < N; i++) Y_pix[i] = Y_pix_raw[i] / y_mean;
+
+    // 2. Spectral Initialization
+    // Direction from X^T Y
     double *Xty = (double *)calloc(nx_eff, sizeof(double));
     for (int i = 0; i < N; i++) {
         for (int j = 0; j < nx_eff; j++) Xty[j] += Y_pix[i] * X[i * nx_eff + j];
     }
-    double norm = 1e-12;
-    for (int j = 0; j < nx_eff; j++) norm += Xty[j] * Xty[j];
-    norm = sqrt(norm);
+    double norm_xty = 1e-12;
+    for (int j = 0; j < nx_eff; j++) norm_xty += Xty[j] * Xty[j];
+    norm_xty = sqrt(norm_xty);
+
+    // Magnitude should be sqrt(mean(Y_normalized)) = 1.0
     for (int j = 0; j < nx_eff; j++) {
-        b_re[j] = 0.5 * Xty[j] / norm;
-        b_im[j] = 0.001 * ((double)rand() / RAND_MAX - 0.5);
+        b_re[j] = Xty[j] / norm_xty; 
+        b_im[j] = 0.05 * ((double)rand() / RAND_MAX - 0.5);
     }
     free(Xty);
 
+    // 3. Gradient Descent
     double *pred = (double *)malloc(N * sizeof(double));
     double *s_re = (double *)malloc(N * sizeof(double));
     double *s_im = (double *)malloc(N * sizeof(double));
+    double *g_re = (double *)malloc(nx_eff * sizeof(double));
+    double *g_im = (double *)malloc(nx_eff * sizeof(double));
 
     for (int iter = 0; iter < iters; iter++) {
         cblas_dgemv(CblasRowMajor, CblasNoTrans, N, nx_eff, 1.0, X, nx_eff, b_re, 1, 0.0, s_re, 1);
         cblas_dgemv(CblasRowMajor, CblasNoTrans, N, nx_eff, 1.0, X, nx_eff, b_im, 1, 0.0, s_im, 1);
+        
         for (int i = 0; i < N; i++) pred[i] = s_re[i] * s_re[i] + s_im[i] * s_im[i];
 
-        double *g_re = (double *)calloc(nx_eff, sizeof(double));
-        double *g_im = (double *)calloc(nx_eff, sizeof(double));
+        memset(g_re, 0, nx_eff * sizeof(double));
+        memset(g_im, 0, nx_eff * sizeof(double));
+
         for (int i = 0; i < N; i++) {
             double d = 4.0 * (pred[i] - Y_pix[i]);
+            // Gradient Clipping to prevent NaNs if it starts diverging
+            if (d > 1e6) d = 1e6; else if (d < -1e6) d = -1e6;
+            
             cblas_daxpy(nx_eff, d * s_re[i], &X[i * nx_eff], 1, g_re, 1);
             cblas_daxpy(nx_eff, d * s_im[i], &X[i * nx_eff], 1, g_im, 1);
         }
+
         for (int j = 0; j < nx_eff; j++) {
             b_re[j] -= lr * (g_re[j] / N + 2.0 * lambda * b_re[j]);
             b_im[j] -= lr * (g_im[j] / N + 2.0 * lambda * b_im[j]);
         }
-        free(g_re); free(g_im);
     }
-    free(pred); free(s_re); free(s_im);
+
+    // 4. Rescale b to match the original y_mean
+    double final_scale = sqrt(y_mean);
+    for (int j = 0; j < nx_eff; j++) {
+        b_re[j] *= final_scale;
+        b_im[j] *= final_scale;
+    }
+
+    free(Y_pix); free(pred); free(s_re); free(s_im); free(g_re); free(g_im);
 }
 
 int main(int argc, char **argv) {
@@ -118,10 +150,10 @@ int main(int argc, char **argv) {
 
     #pragma omp parallel for
     for (long p = 0; p < P_Y; p++) {
-        double *Y_pix = (double *)malloc(N * sizeof(double));
-        for (int i = 0; i < N; i++) Y_pix[i] = Y_r[i * P_Y + p];
-        solve_v4_pixel(Z, Y_pix, &B_re[p * nx_eff], &B_im[p * nx_eff], N, nx_eff, iters, lr, lambda);
-        free(Y_pix);
+        double *Y_pix_vec = (double *)malloc(N * sizeof(double));
+        for (int i = 0; i < N; i++) Y_pix_vec[i] = Y_r[i * P_Y + p];
+        solve_v4_pixel(Z, Y_pix_vec, &B_re[p * nx_eff], &B_im[p * nx_eff], N, nx_eff, iters, lr, lambda);
+        free(Y_pix_vec);
         if (p % 1000 == 0) printf("  Pixel %ld/%ld\n", p, P_Y);
     }
 
