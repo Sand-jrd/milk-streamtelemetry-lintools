@@ -275,10 +275,22 @@ int main(int argc, char **argv) {
     read_fits(x_file, &X, &N_X, &P_X, &xa_x, &ya_x, &nax_x);
     read_fits(y_file, &Y, &N_Y, &P_Y, &xa_y, &ya_y, &nax_y);
 
-    int N = (train_size > 0 && train_size < N_X) ? train_size : (int)N_X;
-    if (N > (int)N_Y) N = (int)N_Y;
-    printf("Using N=%d samples. P_X=%ld P_Y=%ld\n", N, P_X, P_Y);
-
+    int N;
+    if (train_size > 0) {
+        if (train_size > (int)N_X || train_size > (int)N_Y) {
+            fprintf(stderr, "Error: -trainsize %d is larger than available frames (N_X=%ld, N_Y=%ld)\n", train_size, N_X, N_Y);
+            return 1;
+        }
+        N = train_size;
+    } else {
+        if (N_X != N_Y) {
+            fprintf(stderr, "Error: Frame count mismatch! X has %ld frames but Y has %ld frames.\n", N_X, N_Y);
+            fprintf(stderr, "Telemetery and Images must be synchronized and have the same length.\n");
+            return 1;
+        }
+        N = (int)N_X;
+    }
+    printf("Using N=%d samples for training. P_X=%ld P_Y=%ld\n", N, P_X, P_Y);
     // --- Mean/Std for X only (Y is NOT normalized in QP mode) ---
     double *X_mean = (double *)calloc(P_X, sizeof(double));
     double *Y_mean = (double *)calloc(P_Y, sizeof(double));
