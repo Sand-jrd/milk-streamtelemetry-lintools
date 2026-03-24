@@ -40,6 +40,7 @@ void print_help(const char *prog) {
     printf("  -noise <float>        Noise std (default: 1e-9)\n");
     printf("  -trainsize <int>      Training set size (default: all)\n");
     printf("  -ridge <float>        Ridge lambda (default: auto from spectral norm)\n");
+    printf("  -autosmooth <float>   Semi-auto smooth: multiplier on training roughness (default: 0)\n");
     printf("  -epsilon <float>      Positivity tolerance: ZB >= -epsilon (default: -1 = disabled)\n");
     printf("  -rho <float>          ADMM penalty rho (default: 1.0)\n");
     printf("  -admm_iters <int>     ADMM iterations (default: 50)\n");
@@ -61,6 +62,58 @@ void print_help(const char *prog) {
  *
  * B update uses precomputed Cholesky factor of (lambda*I + rho*Z^TZ).
  */
+// 2D Spatial Smoothing proximal (Laplacian-like)
+static void spatial_smooth_patch(double *b_map, int patchsize, double strength) {
+    if (strength <= 0) return;
+    double *tmp = (double *)malloc(patchsize * patchsize * sizeof(double));
+    memcpy(tmp, b_map, patchsize * patchsize * sizeof(double));
+
+    // Simple 3x3 Laplacian-style smoothing: b = (1-w)*b + w*blur(b)
+    // w is related to 'strength'
+    double w = strength / (1.0 + strength);
+    if (w > 0.8) w = 0.8; // cap to prevent excessive blurring
+
+    for (int y = 0; y < patchsize; y++) {
+        for (int x = 0; x < patchsize; x++) {
+            double sum = 0;
+            int count = 0;
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    int ny = y + dy;
+                    int nx = x + dx;
+                    if (ny >= 0 && ny < patchsize && nx >= 0 && nx < patchsize) {
+                        sum += tmp[ny * patchsize + nx];
+                        count++;
+                    }
+                }
+            }
+            b_map[y * patchsize + x] = (1.0 - w) * tmp[y * patchsize + x] + w * (sum / count);
+        }
+    }
+    free(tmp);
+}
+
+// Estimate the intrinsic roughness of the training data
+static double estimate_roughness_double(const double *Y, int N, long P_Y, int xa, int ya) {
+    int N_check = N > 50 ? 50 : N; // sample up to 50 frames
+    double total_r = 0;
+    for (int i = 0; i < N_check; i++) {
+        const double *img = &Y[i * P_Y];
+        double frame_r = 0;
+        double frame_energy = 0;
+        for (int y = 1; y < ya - 1; y++) {
+            for (int x = 1; x < xa - 1; x++) {
+                double val = img[y * xa + x];
+                double lap = 4.0 * val - (img[(y-1)*xa + x] + img[(y+1)*xa + x] + img[y*xa + (x-1)] + img[y*xa + (x+1)]);
+                frame_r += lap * lap;
+                frame_energy += val * val;
+            }
+        }
+        if (frame_energy > 1e-12) total_r += sqrt(frame_r / frame_energy);
+    }
+    return total_r / N_check;
+}
+
 static void admm_qp_double(
     const double *Z,      // N x z_dim
     const double *Y_lat,  // N x target_dim  (residual U_latent)
@@ -68,7 +121,8 @@ static void admm_qp_double(
     int N, int z_dim, long target_dim,
     double lambda, double epsilon, double rho, int admm_iters,
     const double *Y_mean_patch, // Mean of Y in this patch/basis
-    int y_pca_mode)
+    int y_pca_mode,
+    double smooth_strength, int patchsize)
 {
     printf("ADMM QP: N=%d z_dim=%d target_dim=%ld lambda=%g eps=%g rho=%g iters=%d (PCA=%d)\n",
            N, z_dim, target_dim, lambda, epsilon, rho, admm_iters, y_pca_mode);
@@ -137,6 +191,13 @@ static void admm_qp_double(
         memcpy(B, RHS, (long)z_dim * target_dim * sizeof(double));
         LAPACKE_dpotrs(LAPACK_ROW_MAJOR, 'U', z_dim, (int)target_dim, A_B, z_dim, B, (int)target_dim);
 
+        // --- New: Spatial Smoothing Proxy ---
+        if (smooth_strength > 0 && !y_pca_mode) {
+            for (int k = 0; k < z_dim; k++) {
+                spatial_smooth_patch(&B[k * target_dim], patchsize, smooth_strength);
+            }
+        }
+
         // --- Compute ZB ---
         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                     N, (int)target_dim, z_dim, 1.0, Z, z_dim, B, (int)target_dim, 0.0, ZB, (int)target_dim);
@@ -146,9 +207,6 @@ static void admm_qp_double(
             double s_unc = (2.0 * Y_lat[k] + rho * (ZB[k] + U_admm[k])) / denom;
             double bound = -epsilon;
             if (!y_pca_mode) {
-                // If regressing raw pixels, enforce Total_PSF >= -epsilon
-                // i.e., Residual >= -Mean - epsilon
-                // Y_mean_patch has length target_dim. k % target_dim is the pixel index.
                 bound = -Y_mean_patch[k % target_dim] - epsilon;
             }
             S[k] = s_unc < bound ? bound : s_unc;
@@ -186,6 +244,7 @@ int main(int argc, char **argv) {
     double noise_std   = 1e-9;
     int    train_size  = -1;
     double ridge_lambda = 0.0;   // 0 = auto
+    double auto_smooth_mult = 0.0; // 0 = disabled
     double epsilon     = -1.0;   // <0 = disabled (standard ridge)
     double admm_rho    = 1.0;
     int    admm_iters  = 50;
@@ -199,13 +258,14 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "-noise")      == 0) noise_std   = atof(argv[++i]);
         else if (strcmp(argv[i], "-trainsize")  == 0) train_size  = atoi(argv[++i]);
         else if (strcmp(argv[i], "-ridge")      == 0) ridge_lambda = atof(argv[++i]);
+        else if (strcmp(argv[i], "-autosmooth") == 0) auto_smooth_mult = atof(argv[++i]);
         else if (strcmp(argv[i], "-epsilon")    == 0) epsilon     = atof(argv[++i]);
         else if (strcmp(argv[i], "-rho")        == 0) admm_rho    = atof(argv[++i]);
         else if (strcmp(argv[i], "-admm_iters") == 0) admm_iters  = atoi(argv[++i]);
     }
 
-    printf("v3 Settings: nx=%d ny=%d scale=%d quad=%d ridge=%g epsilon=%g rho=%g admm_iters=%d\n",
-           nx, ny, scale, use_quadratic, ridge_lambda, epsilon, admm_rho, admm_iters);
+    printf("v3 Settings: nx=%d ny=%d scale=%d quad=%d ridge=%g autosmooth=%g epsilon=%g rho=%g admm_iters=%d\n",
+           nx, ny, scale, use_quadratic, ridge_lambda, auto_smooth_mult, epsilon, admm_rho, admm_iters);
 
     // ===== Double precision path =====
     double *X = NULL, *Y = NULL;
@@ -365,6 +425,15 @@ int main(int argc, char **argv) {
     if (noise_std > 0 && !y_pca_mode)
         for (long i = 0; i < (long)N * z_dim; i++) Z[i] += rand_normal() * noise_std;
 
+    // --- Auto smooth ---
+    double spatial_smooth = 0;
+    if (auto_smooth_mult > 0) {
+        double baseline_r = estimate_roughness_double(Y, N, P_Y, xa_y, ya_y);
+        printf("Measured training roughness: %g\n", baseline_r);
+        spatial_smooth = baseline_r * auto_smooth_mult;
+        printf("Applying spatial_smooth = %g (multiplier %g)\n", spatial_smooth, auto_smooth_mult);
+    }
+
     // --- Auto ridge lambda ---
     double lambda;
     if (ridge_lambda > 0) {
@@ -412,7 +481,8 @@ int main(int argc, char **argv) {
         }
 
         admm_qp_double(Z, U_latent, B_latent, N, z_dim, target_dim,
-                       lambda, epsilon, admm_rho, admm_iters, Y_mean_latent, y_pca_mode);
+                       lambda, epsilon, admm_rho, admm_iters, Y_mean_latent, y_pca_mode,
+                       spatial_smooth, patchsize);
         free(Y_mean_latent);
     } else {
         // Standard ridge (same as v2)
