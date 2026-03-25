@@ -367,6 +367,7 @@ install(TARGETS
     milk-streamtelemetry-wfs2psf-predict
     milk-streamtelemetry-wfs2psf-fit-v2
     milk-streamtelemetry-wfs2psf-predict-v2
+    milk-streamtelemetry-wfs2psf-update-v2
     milk-streamtelemetry-wfs2psf-fit-v3
     milk-streamtelemetry-wfs2psf-predict-v3
     milk-streamtelemetry-wfs2psf-fit-v4
