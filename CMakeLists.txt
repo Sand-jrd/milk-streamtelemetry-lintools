@@ -270,6 +270,25 @@ if(USE_NUMA)
     target_link_libraries(milk-streamtelemetry-wfs2psf-predict-v2 PRIVATE ${NUMA_LIBRARIES})
 endif()
 
+# WFS2PSF Update Program v2
+add_executable(milk-streamtelemetry-wfs2psf-update-v2 wfs2psf_v2_update.c)
+target_include_directories(milk-streamtelemetry-wfs2psf-update-v2 PRIVATE
+    ${CFITSIO_INCLUDE_DIRS}
+    ${OPENBLAS_INCLUDE_DIRS}
+    ${LAPACKE_INCLUDE_DIRS}
+)
+target_link_libraries(milk-streamtelemetry-wfs2psf-update-v2 PRIVATE
+    common
+    ${CFITSIO_LIBRARIES}
+    ${OPENBLAS_LIBRARIES}
+    ${LAPACKE_LIBRARIES}
+    m
+)
+if(USE_NUMA)
+    target_include_directories(milk-streamtelemetry-wfs2psf-update-v2 PRIVATE ${NUMA_INCLUDE_DIRS})
+    target_link_libraries(milk-streamtelemetry-wfs2psf-update-v2 PRIVATE ${NUMA_LIBRARIES})
+endif()
+
 # WFS2PSF Fit Program v3
 add_executable(milk-streamtelemetry-wfs2psf-fit-v3 wfs2psf_v3_fit.c)
 target_include_directories(milk-streamtelemetry-wfs2psf-fit-v3 PRIVATE

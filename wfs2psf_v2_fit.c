@@ -175,6 +175,7 @@ void print_help(const char *prog) {
     printf("  -laplacian <float>    Laplacian lambda (default: -1.0)\n");
     printf("  -trainsize <int>      Training set size (default: all)\n");
     printf("  -float                Use single precision (default is double)\n");
+    printf("  -save_update          Save covariance matrices for wfs2psf_v2_update\n");
 }
 
 int main(int argc, char **argv) {
@@ -197,6 +198,7 @@ int main(int argc, char **argv) {
     double laplacian_lambda = -1.0;
     int train_size = -1;
     int use_float = 0;
+    int save_update = 0;
 
     for (int i = 4; i < argc; i++) {
         if (strcmp(argv[i], "-nx") == 0) nx = atoi(argv[++i]);
@@ -210,10 +212,11 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "-laplacian") == 0) laplacian_lambda = atof(argv[++i]);
         else if (strcmp(argv[i], "-trainsize") == 0) train_size = atoi(argv[++i]);
         else if (strcmp(argv[i], "-float") == 0) use_float = 1;
+        else if (strcmp(argv[i], "-save_update") == 0) save_update = 1;
     }
 
-    printf("Settings: nx=%d, ny=%d, scale=%d, quad=%d, reg_factor=%g, noise=%g, laplacian=%g, train_size=%d, float=%d\n",
-           nx, ny, scale, use_quadratic, reg_factor, noise_std, laplacian_lambda, train_size, use_float);
+    printf("Settings: nx=%d, ny=%d, scale=%d, quad=%d, reg_factor=%g, noise=%g, laplacian=%g, train_size=%d, float=%d, save_update=%d\n",
+           nx, ny, scale, use_quadratic, reg_factor, noise_std, laplacian_lambda, train_size, use_float, save_update);
 
     if (!use_float) {
         double *X = NULL, *Y = NULL;
@@ -428,6 +431,16 @@ int main(int argc, char **argv) {
         }
 
         printf("Starting regression...\n");
+        double *ZtZ_saved = NULL;
+        double *ZtU_saved = NULL;
+        if (save_update) {
+            printf("Computing ZtZ and ZtU matrices for incremental updates...\n");
+            ZtZ_saved = (double *)malloc_numa(z_dim * z_dim * sizeof(double));
+            ZtU_saved = (double *)malloc_numa(z_dim * target_dim * sizeof(double));
+            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, z_dim, z_dim, N, 1.0, Z, z_dim, Z, z_dim, 0.0, ZtZ_saved, z_dim);
+            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, z_dim, target_dim, N, 1.0, Z, z_dim, U_latent, target_dim, 0.0, ZtU_saved, target_dim);
+        }
+
         double *B_latent = (double *)malloc_numa(z_dim * target_dim * sizeof(double));
         if (!B_latent) { fprintf(stderr, "Failed to allocate B_latent (%d x %d)\n", z_dim, target_dim); exit(1); }
         
@@ -468,10 +481,14 @@ int main(int argc, char **argv) {
                 free_numa(M, N * target_dim * sizeof(double));
             } else {
                 // Primal ridge regression: B = (Z^T Z + lambda I)^-1 Z^T U
-                double *ZtZ = (double *)malloc(z_dim * z_dim * sizeof(double));
+                double *ZtZ = (double *)malloc_numa(z_dim * z_dim * sizeof(double));
                 if (!ZtZ) { fprintf(stderr, "Failed to allocate ZtZ (%d x %d)\n", z_dim, z_dim); exit(1); }
-                cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                            z_dim, z_dim, N, 1.0, Z, z_dim, Z, z_dim, 0.0, ZtZ, z_dim);
+                if (save_update && ZtZ_saved) {
+                    memcpy(ZtZ, ZtZ_saved, z_dim * z_dim * sizeof(double));
+                } else {
+                    cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                                z_dim, z_dim, N, 1.0, Z, z_dim, Z, z_dim, 0.0, ZtZ, z_dim);
+                }
                 
                 double *ZtZ_copy = (double *)malloc_numa(z_dim * z_dim * sizeof(double));
                 if (!ZtZ_copy) { fprintf(stderr, "Failed to allocate ZtZ_copy\n"); exit(1); }
@@ -485,8 +502,12 @@ int main(int argc, char **argv) {
                 for (int i = 0; i < z_dim; i++) ZtZ[i * z_dim + i] += ridge_auto;
     
                 double *ZtU = (double *)malloc_numa(z_dim * target_dim * sizeof(double));
-                cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                            z_dim, target_dim, N, 1.0, Z, z_dim, U_latent, target_dim, 0.0, ZtU, target_dim);
+                if (save_update && ZtU_saved) {
+                    memcpy(ZtU, ZtU_saved, z_dim * target_dim * sizeof(double));
+                } else {
+                    cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                                z_dim, target_dim, N, 1.0, Z, z_dim, U_latent, target_dim, 0.0, ZtU, target_dim);
+                }
                 
                 LAPACKE_dposv(LAPACK_ROW_MAJOR, 'U', z_dim, target_dim, ZtZ, z_dim, ZtU, target_dim);
                 memcpy(B_latent, ZtU, z_dim * target_dim * sizeof(double));
@@ -525,6 +546,13 @@ int main(int argc, char **argv) {
         snprintf(path, 1024, "%s_B_latent.fits", out_prefix);
         write_fits_2d(path, B_latent, target_dim, z_dim); 
 
+        if (save_update) {
+            snprintf(path, 1024, "%s_ZtZ.fits", out_prefix);
+            write_fits_2d(path, ZtZ_saved, z_dim, z_dim);
+            snprintf(path, 1024, "%s_ZtU.fits", out_prefix);
+            write_fits_2d(path, ZtU_saved, target_dim, z_dim);
+        }
+
         snprintf(path, 1024, "%s_PCx.fits", out_prefix);
         write_fits_2d(path, PCx, nx, P_X); 
 
@@ -556,6 +584,10 @@ int main(int argc, char **argv) {
         fprintf(fp, "nxp %d\n", nxp);
         fprintf(fp, "nyp %d\n", nyp);
         fprintf(fp, "y_pca_mode %d\n", y_pca_mode);
+        fprintf(fp, "N_total %d\n", N);
+        fprintf(fp, "reg_factor %f\n", reg_factor);
+        fprintf(fp, "scale %d\n", scale);
+        fprintf(fp, "use_quadratic %d\n", use_quadratic);
         fclose(fp);
 
         free_numa(X, N_X * P_X * sizeof(double));
@@ -570,8 +602,11 @@ int main(int argc, char **argv) {
         free_numa(Vt_x, min_dim_X * P_X * sizeof(double));
         free_numa(PCx, P_X * nx * sizeof(double));
         free_numa(T, N * nx * sizeof(double)); 
-        free_numa(Z, N * z_dim * sizeof(double));
         free_numa(B_latent, z_dim * target_dim * sizeof(double));
+        if (save_update) {
+            free_numa(ZtZ_saved, z_dim * z_dim * sizeof(double));
+            free_numa(ZtU_saved, z_dim * target_dim * sizeof(double));
+        }
         if (y_pca_mode) free_numa(PCy_global, n_patches * patch_pixels * ny_per_patch * sizeof(double));
         free_numa(U_latent, N * target_dim_total * sizeof(double));
     } else {
@@ -771,6 +806,15 @@ int main(int argc, char **argv) {
             for (int i = 0; i < N * z_dim; i++) Z[i] += (float)(rand_normal() * noise_std);
         }
 
+        float *ZtZ_saved = NULL;
+        float *ZtU_saved = NULL;
+        if (save_update) {
+            ZtZ_saved = (float *)malloc_numa(z_dim * z_dim * sizeof(float));
+            ZtU_saved = (float *)malloc_numa(z_dim * target_dim * sizeof(float));
+            cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, z_dim, z_dim, N, 1.0f, Z, z_dim, Z, z_dim, 0.0f, ZtZ_saved, z_dim);
+            cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, z_dim, target_dim, N, 1.0f, Z, z_dim, U_latent, target_dim, 0.0f, ZtU_saved, target_dim);
+        }
+
         float *B_latent = (float *)malloc_numa(z_dim * target_dim * sizeof(float));
         if (reg_factor > 0.0) {
             float eps = FLT_EPSILON;
@@ -793,7 +837,11 @@ int main(int argc, char **argv) {
                 free_numa(M, N * target_dim * sizeof(float));
             } else {
                 float *ZtZ = (float *)malloc_numa(z_dim * z_dim * sizeof(float));
-                cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, z_dim, z_dim, N, 1.0f, Z, z_dim, Z, z_dim, 0.0f, ZtZ, z_dim);
+                if (save_update && ZtZ_saved) {
+                    memcpy(ZtZ, ZtZ_saved, z_dim * z_dim * sizeof(float));
+                } else {
+                    cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, z_dim, z_dim, N, 1.0f, Z, z_dim, Z, z_dim, 0.0f, ZtZ, z_dim);
+                }
                 float *ZtZ_copy = (float *)malloc_numa(z_dim * z_dim * sizeof(float));
                 memcpy(ZtZ_copy, ZtZ, z_dim * z_dim * sizeof(float));
                 float *S_ztz = (float *)malloc_numa(z_dim * sizeof(float));
@@ -801,7 +849,11 @@ int main(int argc, char **argv) {
                 float ridge_auto = (float)reg_factor * (eps * z_dim * S_ztz[0]);
                 for (int i = 0; i < z_dim; i++) ZtZ[i * z_dim + i] += ridge_auto;
                 float *ZtU = (float *)malloc_numa(z_dim * target_dim * sizeof(float));
-                cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, z_dim, target_dim, N, 1.0f, Z, z_dim, U_latent, target_dim, 0.0f, ZtU, target_dim);
+                if (save_update && ZtU_saved) {
+                    memcpy(ZtU, ZtU_saved, z_dim * target_dim * sizeof(float));
+                } else {
+                    cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, z_dim, target_dim, N, 1.0f, Z, z_dim, U_latent, target_dim, 0.0f, ZtU, target_dim);
+                }
                 LAPACKE_sposv(LAPACK_ROW_MAJOR, 'U', z_dim, target_dim, ZtZ, z_dim, ZtU, target_dim);
                 memcpy(B_latent, ZtU, z_dim * target_dim * sizeof(float));
                 free_numa(ZtZ, z_dim * z_dim * sizeof(float));
@@ -832,6 +884,13 @@ int main(int argc, char **argv) {
         snprintf(path, 1024, "%s_B_latent.fits", out_prefix);
         write_fits_2d_float(path, B_latent, target_dim, z_dim); 
 
+        if (save_update) {
+            snprintf(path, 1024, "%s_ZtZ.fits", out_prefix);
+            write_fits_2d_float(path, ZtZ_saved, z_dim, z_dim);
+            snprintf(path, 1024, "%s_ZtU.fits", out_prefix);
+            write_fits_2d_float(path, ZtU_saved, target_dim, z_dim);
+        }
+
         snprintf(path, 1024, "%s_PCx.fits", out_prefix);
         write_fits_2d_float(path, PCx, nx, P_X); 
 
@@ -857,11 +916,19 @@ int main(int argc, char **argv) {
         fprintf(fp, "nxp %d\n", nxp);
         fprintf(fp, "nyp %d\n", nyp);
         fprintf(fp, "y_pca_mode %d\n", y_pca_mode);
+        fprintf(fp, "N_total %d\n", N);
+        fprintf(fp, "reg_factor %f\n", reg_factor);
+        fprintf(fp, "scale %d\n", scale);
+        fprintf(fp, "use_quadratic %d\n", use_quadratic);
         fclose(fp);
 
         free(X); free(Y); free(X_mean); free(Y_mean); free(X_std); free(Y_std);
         free(Xc_copy); free(S_x); free(U_x); free(Vt_x); free(PCx); free(T); 
         free(Z); free(B_latent); if (y_pca_mode) free(PCy_global); free(U_latent);
+        if (save_update) {
+            free_numa(ZtZ_saved, z_dim * z_dim * sizeof(float));
+            free_numa(ZtU_saved, z_dim * target_dim * sizeof(float));
+        }
     }
 
     return 0;
