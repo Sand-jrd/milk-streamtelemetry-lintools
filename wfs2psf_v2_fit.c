@@ -170,7 +170,7 @@ void print_help(const char *prog) {
     printf("  -patchsize <int>      PSF patch size (default: 16)\n");
     printf("  -noscale              Disable scaling (default: enabled)\n");
     printf("  -noquad               Disable quadratic expansion (default: enabled)\n");
-    printf("  -noreg                Disable ridge regularization (default: enabled)\n");
+    printf("  -reg <factor>         Ridge regularization factor (default: 1.0, 0 to disable)\n");
     printf("  -noise <float>        Noise std (default: 1e-9)\n");
     printf("  -laplacian <float>    Laplacian lambda (default: -1.0)\n");
     printf("  -trainsize <int>      Training set size (default: all)\n");
@@ -192,7 +192,7 @@ int main(int argc, char **argv) {
     int patchsize = 16;
     int scale = 1;
     int use_quadratic = 1;
-    int reg_mode = 1;
+    double reg_factor = 1.0;
     double noise_std = 1e-9;
     double laplacian_lambda = -1.0;
     int train_size = -1;
@@ -204,15 +204,16 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "-patchsize") == 0) patchsize = atoi(argv[++i]);
         else if (strcmp(argv[i], "-noscale") == 0) scale = 0;
         else if (strcmp(argv[i], "-noquad") == 0) use_quadratic = 0;
-        else if (strcmp(argv[i], "-noreg") == 0) reg_mode = 0;
+        else if (strcmp(argv[i], "-noreg") == 0) reg_factor = 0.0;
+        else if (strcmp(argv[i], "-reg") == 0) reg_factor = atof(argv[++i]);
         else if (strcmp(argv[i], "-noise") == 0) noise_std = atof(argv[++i]);
         else if (strcmp(argv[i], "-laplacian") == 0) laplacian_lambda = atof(argv[++i]);
         else if (strcmp(argv[i], "-trainsize") == 0) train_size = atoi(argv[++i]);
         else if (strcmp(argv[i], "-float") == 0) use_float = 1;
     }
 
-    printf("Settings: nx=%d, ny=%d, scale=%d, quad=%d, reg=%d, noise=%g, laplacian=%g, train_size=%d, float=%d\n",
-           nx, ny, scale, use_quadratic, reg_mode, noise_std, laplacian_lambda, train_size, use_float);
+    printf("Settings: nx=%d, ny=%d, scale=%d, quad=%d, reg_factor=%g, noise=%g, laplacian=%g, train_size=%d, float=%d\n",
+           nx, ny, scale, use_quadratic, reg_factor, noise_std, laplacian_lambda, train_size, use_float);
 
     if (!use_float) {
         double *X = NULL, *Y = NULL;
@@ -430,7 +431,7 @@ int main(int argc, char **argv) {
         double *B_latent = (double *)malloc_numa(z_dim * target_dim * sizeof(double));
         if (!B_latent) { fprintf(stderr, "Failed to allocate B_latent (%d x %d)\n", z_dim, target_dim); exit(1); }
         
-        if (reg_mode) {
+        if (reg_factor > 0.0) {
             double eps = DBL_EPSILON;
             if (N < z_dim) {
                 // Dual ridge regression: B = Z^T (Z Z^T + lambda I)^-1 U
@@ -446,7 +447,7 @@ int main(int argc, char **argv) {
                 LAPACKE_dgesdd(LAPACK_ROW_MAJOR, 'N', N, N, ZZt_copy, N, S_zzt, NULL, 1, NULL, 1);
                 
                 double norm_ZZt = S_zzt[0];
-                double ridge_auto = eps * z_dim * norm_ZZt;
+                double ridge_auto = reg_factor * (eps * z_dim * norm_ZZt);
                 
                 for (int i = 0; i < N; i++) ZZt[i * N + i] += ridge_auto;
                 
@@ -479,7 +480,7 @@ int main(int argc, char **argv) {
                 LAPACKE_dgesdd(LAPACK_ROW_MAJOR, 'N', z_dim, z_dim, ZtZ_copy, z_dim, S_ztz, NULL, 1, NULL, 1);
                 
                 double norm_ZtZ = S_ztz[0];
-                double ridge_auto = eps * z_dim * norm_ZtZ;
+                double ridge_auto = reg_factor * (eps * z_dim * norm_ZtZ);
     
                 for (int i = 0; i < z_dim; i++) ZtZ[i * z_dim + i] += ridge_auto;
     
@@ -771,7 +772,7 @@ int main(int argc, char **argv) {
         }
 
         float *B_latent = (float *)malloc_numa(z_dim * target_dim * sizeof(float));
-        if (reg_mode) {
+        if (reg_factor > 0.0) {
             float eps = FLT_EPSILON;
             if (N < z_dim) {
                 float *ZZt = (float *)malloc_numa(N * N * sizeof(float));
@@ -780,7 +781,7 @@ int main(int argc, char **argv) {
                 memcpy(ZZt_copy, ZZt, N * N * sizeof(float));
                 float *S_zzt = (float *)malloc_numa(N * sizeof(float));
                 LAPACKE_sgesdd(LAPACK_ROW_MAJOR, 'N', N, N, ZZt_copy, N, S_zzt, NULL, 1, NULL, 1);
-                float ridge_auto = eps * z_dim * S_zzt[0];
+                float ridge_auto = (float)reg_factor * (eps * z_dim * S_zzt[0]);
                 for (int i = 0; i < N; i++) ZZt[i * N + i] += ridge_auto;
                 float *M = (float *)malloc_numa(N * target_dim * sizeof(float));
                 memcpy(M, U_latent, N * target_dim * sizeof(float));
@@ -797,7 +798,7 @@ int main(int argc, char **argv) {
                 memcpy(ZtZ_copy, ZtZ, z_dim * z_dim * sizeof(float));
                 float *S_ztz = (float *)malloc_numa(z_dim * sizeof(float));
                 LAPACKE_sgesdd(LAPACK_ROW_MAJOR, 'N', z_dim, z_dim, ZtZ_copy, z_dim, S_ztz, NULL, 1, NULL, 1);
-                float ridge_auto = eps * z_dim * S_ztz[0];
+                float ridge_auto = (float)reg_factor * (eps * z_dim * S_ztz[0]);
                 for (int i = 0; i < z_dim; i++) ZtZ[i * z_dim + i] += ridge_auto;
                 float *ZtU = (float *)malloc_numa(z_dim * target_dim * sizeof(float));
                 cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, z_dim, target_dim, N, 1.0f, Z, z_dim, U_latent, target_dim, 0.0f, ZtU, target_dim);
