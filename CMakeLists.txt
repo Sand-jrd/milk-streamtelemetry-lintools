@@ -11,6 +11,17 @@ find_package(LAPACK REQUIRED)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -Wall")
 
+option(USE_NUMA "Use NUMA-aware allocation (Linux only)" OFF)
+if(USE_NUMA)
+    pkg_check_modules(NUMA numa)
+    if(NUMA_FOUND)
+        add_definitions(-DUSE_NUMA)
+    else()
+        message(WARNING "libnuma not found, disabling USE_NUMA")
+        set(USE_NUMA OFF)
+    endif()
+endif()
+
 # Common utilities
 add_library(common STATIC common.c)
 target_include_directories(common PRIVATE ${CFITSIO_INCLUDE_DIRS})
@@ -235,6 +246,10 @@ target_link_libraries(milk-streamtelemetry-wfs2psf-fit-v2 PRIVATE
     ${LAPACKE_LIBRARIES}
     m
 )
+if(USE_NUMA)
+    target_include_directories(milk-streamtelemetry-wfs2psf-fit-v2 PRIVATE ${NUMA_INCLUDE_DIRS})
+    target_link_libraries(milk-streamtelemetry-wfs2psf-fit-v2 PRIVATE ${NUMA_LIBRARIES})
+endif()
 
 # WFS2PSF Predict Program v2
 add_executable(milk-streamtelemetry-wfs2psf-predict-v2 wfs2psf_v2_predict.c)
@@ -250,6 +265,10 @@ target_link_libraries(milk-streamtelemetry-wfs2psf-predict-v2 PRIVATE
     ${LAPACKE_LIBRARIES}
     m
 )
+if(USE_NUMA)
+    target_include_directories(milk-streamtelemetry-wfs2psf-predict-v2 PRIVATE ${NUMA_INCLUDE_DIRS})
+    target_link_libraries(milk-streamtelemetry-wfs2psf-predict-v2 PRIVATE ${NUMA_LIBRARIES})
+endif()
 
 # WFS2PSF Fit Program v3
 add_executable(milk-streamtelemetry-wfs2psf-fit-v3 wfs2psf_v3_fit.c)

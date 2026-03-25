@@ -6,6 +6,22 @@
 #include <unistd.h>
 #include "common.h"
 
+#ifdef USE_NUMA
+#include <numa.h>
+#define malloc_numa(s) numa_alloc_interleaved(s)
+#define calloc_numa(n, s) ({ \
+    size_t _size = (n) * (s); \
+    void *_ptr = numa_alloc_interleaved(_size); \
+    if (_ptr) memset(_ptr, 0, _size); \
+    _ptr; \
+})
+#define free_numa(p, s) numa_free(p, s)
+#else
+#define malloc_numa(s) malloc(s)
+#define calloc_numa(n, s) calloc(n, s)
+#define free_numa(p, s) free(p)
+#endif
+
 void quadratic_expand_double(const double *T, double *Z, long n_samples, int nx) {
     int z_dim = nx + nx*(nx+1)/2;
     for (long i = 0; i < n_samples; i++) {
@@ -116,19 +132,19 @@ int main(int argc, char **argv) {
             }
         }
 
-        double *T = (double *)malloc(N * nx * sizeof(double));
+        double *T = (double *)malloc_numa(N * nx * sizeof(double));
         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, (int)N, (int)nx, (int)P_X, 1.0, X, (int)P_X, PCx, (int)nx, 0.0, T, (int)nx);
 
         double *Z = T;
         if (use_quadratic) {
-            Z = (double *)malloc(N * z_dim * sizeof(double));
+            Z = (double *)malloc_numa(N * z_dim * sizeof(double));
             quadratic_expand_double(T, Z, N, (int)nx);
         }
 
-        double *U_pred = (double *)malloc(N * target_dim * sizeof(double));
+        double *U_pred = (double *)malloc_numa(N * target_dim * sizeof(double));
         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, (int)N, (int)target_dim, (int)z_dim, 1.0, Z, (int)z_dim, B_latent, (int)target_dim, 0.0, U_pred, (int)target_dim);
 
-        double *Y_new = (double *)calloc(N * P_Y, sizeof(double));
+        double *Y_new = (double *)calloc_numa(N * P_Y, sizeof(double));
         int patch_pixels = patchsize * patchsize;
         for (int i = 0; i < N; i++) {
             for (int py = 0; py < nyp; py++) {
@@ -169,9 +185,11 @@ int main(int argc, char **argv) {
         else write_fits_2d(out_file, Y_new, (int)P_Y, (int)N);
 
         free(X); free(X_mean); free(X_std); free(Y_mean); free(Y_std);
-        free(PCx); free(B_latent); free(PCy_local); free(T); 
-        if (use_quadratic) free(Z);
-        free(Y_new); free(U_pred);
+        free(PCx); free(B_latent); if (y_pca_mode) free(PCy_local); 
+        free_numa(T, N * nx * sizeof(double)); 
+        if (use_quadratic) free_numa(Z, N * z_dim * sizeof(double));
+        free_numa(Y_new, N * P_Y * sizeof(double)); 
+        free_numa(U_pred, N * target_dim * sizeof(double));
     } else {
         // ===================================
         // SINGLE PRECISION PATH
@@ -227,19 +245,19 @@ int main(int argc, char **argv) {
             }
         }
 
-        float *T = (float *)malloc(N * nx * sizeof(float));
+        float *T = (float *)malloc_numa(N * nx * sizeof(float));
         cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, (int)N, (int)nx, (int)P_X, 1.0f, X, (int)P_X, PCx, (int)nx, 0.0f, T, (int)nx);
 
         float *Z = T;
         if (use_quadratic) {
-            Z = (float *)malloc(N * z_dim * sizeof(float));
+            Z = (float *)malloc_numa(N * z_dim * sizeof(float));
             quadratic_expand_float(T, Z, N, (int)nx);
         }
 
-        float *U_pred = (float *)malloc(N * target_dim * sizeof(float));
+        float *U_pred = (float *)malloc_numa(N * target_dim * sizeof(float));
         cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, (int)N, (int)target_dim, (int)z_dim, 1.0f, Z, (int)z_dim, B_latent, (int)target_dim, 0.0f, U_pred, (int)target_dim);
 
-        float *Y_new = (float *)calloc(N * P_Y, sizeof(float));
+        float *Y_new = (float *)calloc_numa(N * P_Y, sizeof(float));
         int patch_pixels = patchsize * patchsize;
         for (int i = 0; i < N; i++) {
             for (int py = 0; py < nyp; py++) {
@@ -279,9 +297,11 @@ int main(int argc, char **argv) {
         else write_fits_2d_float(out_file, Y_new, (int)P_Y, (int)N);
 
         free(X); free(X_mean); free(X_std); free(Y_mean); free(Y_std);
-        free(PCx); free(B_latent); free(PCy_local); free(T); 
-        if (use_quadratic) free(Z);
-        free(Y_new); free(U_pred);
+        free(PCx); free(B_latent); if (y_pca_mode) free(PCy_local); 
+        free_numa(T, N * nx * sizeof(float)); 
+        if (use_quadratic) free_numa(Z, N * z_dim * sizeof(float));
+        free_numa(Y_new, N * P_Y * sizeof(float)); 
+        free_numa(U_pred, N * target_dim * sizeof(float));
     }
 
     printf("Done. Saved %s\n", out_file);

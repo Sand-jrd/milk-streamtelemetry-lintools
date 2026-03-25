@@ -7,6 +7,22 @@
 #include <float.h>
 #include "common.h"
 
+#ifdef USE_NUMA
+#include <numa.h>
+#define malloc_numa(s) numa_alloc_interleaved(s)
+#define calloc_numa(n, s) ({ \
+    size_t _size = (n) * (s); \
+    void *_ptr = numa_alloc_interleaved(_size); \
+    if (_ptr) memset(_ptr, 0, _size); \
+    _ptr; \
+})
+#define free_numa(p, s) numa_free(p, s)
+#else
+#define malloc_numa(s) malloc(s)
+#define calloc_numa(n, s) calloc(n, s)
+#define free_numa(p, s) free(p)
+#endif
+
 // Helper to expand T to Z
 // For a vector T (size nx), the quadratic expansion Z contains:
 // T_0, T_1, ..., T_{nx-1}, T_0*T_0, T_0*T_1, ..., T_{nx-1}*T_{nx-1}
@@ -80,19 +96,19 @@ void solve_least_squares_double(double *Z, double *U, double *B, int n_samples, 
     // Z is (n_samples x z_dim)
     // U is (n_samples x target_dim)
     // On entry, Z and U are overridden, so we need copies.
-    double *Z_copy = (double *)malloc(n_samples * z_dim * sizeof(double));
+    double *Z_copy = (double *)malloc_numa(n_samples * z_dim * sizeof(double));
     memcpy(Z_copy, Z, n_samples * z_dim * sizeof(double));
     
     // dgelsd requires B to be at least max(n_samples, z_dim) rows.
     int ldb_rows = (n_samples > z_dim) ? n_samples : z_dim;
-    double *U_copy = (double *)calloc(ldb_rows * target_dim, sizeof(double));
+    double *U_copy = (double *)calloc_numa(ldb_rows * target_dim, sizeof(double));
     for(int i=0; i<n_samples; i++) {
         for(int j=0; j<target_dim; j++) {
             U_copy[i * target_dim + j] = U[i * target_dim + j];
         }
     }
 
-    double *S = (double *)malloc(z_dim * sizeof(double));
+    double *S = (double *)malloc_numa(z_dim * sizeof(double));
     double rcond = -1.0; // default machine precision
     int rank;
 
@@ -105,22 +121,24 @@ void solve_least_squares_double(double *Z, double *U, double *B, int n_samples, 
         }
     }
 
-    free(Z_copy); free(U_copy); free(S);
+    free_numa(Z_copy, n_samples * z_dim * sizeof(double));
+    free_numa(U_copy, ldb_rows * target_dim * sizeof(double));
+    free_numa(S, z_dim * sizeof(double));
 }
 
 void solve_least_squares_float(float *Z, float *U, float *B, int n_samples, int z_dim, int target_dim) {
-    float *Z_copy = (float *)malloc(n_samples * z_dim * sizeof(float));
+    float *Z_copy = (float *)malloc_numa(n_samples * z_dim * sizeof(float));
     memcpy(Z_copy, Z, n_samples * z_dim * sizeof(float));
     
     int ldb_rows = (n_samples > z_dim) ? n_samples : z_dim;
-    float *U_copy = (float *)calloc(ldb_rows * target_dim, sizeof(float));
+    float *U_copy = (float *)calloc_numa(ldb_rows * target_dim, sizeof(float));
     for(int i=0; i<n_samples; i++) {
         for(int j=0; j<target_dim; j++) {
             U_copy[i * target_dim + j] = U[i * target_dim + j];
         }
     }
 
-    float *S = (float *)malloc(z_dim * sizeof(float));
+    float *S = (float *)malloc_numa(z_dim * sizeof(float));
     float rcond = -1.0f;
     int rank;
 
@@ -132,7 +150,9 @@ void solve_least_squares_float(float *Z, float *U, float *B, int n_samples, int 
         }
     }
 
-    free(Z_copy); free(U_copy); free(S);
+    free_numa(Z_copy, n_samples * z_dim * sizeof(float));
+    free_numa(U_copy, ldb_rows * target_dim * sizeof(float));
+    free_numa(S, z_dim * sizeof(float));
 }
 
 // Generate normally distributed noise (Box-Muller)
@@ -219,10 +239,10 @@ int main(int argc, char **argv) {
         }
         printf("Using N = %d samples. P_X = %ld, P_Y = %ld\n", N, P_X, P_Y);
 
-        double *X_mean = (double*)calloc(P_X, sizeof(double));
-        double *Y_mean = (double*)calloc(P_Y, sizeof(double));
-        double *X_std = (double*)malloc(P_X * sizeof(double));
-        double *Y_std = (double*)malloc(P_Y * sizeof(double));
+        double *X_mean = (double*)calloc_numa(P_X, sizeof(double));
+        double *Y_mean = (double*)calloc_numa(P_Y, sizeof(double));
+        double *X_std = (double*)malloc_numa(P_X * sizeof(double));
+        double *Y_std = (double*)malloc_numa(P_Y * sizeof(double));
 
         for(long j=0; j<P_X; j++) X_std[j] = 1.0;
         for(long j=0; j<P_Y; j++) Y_std[j] = 1.0;
@@ -271,13 +291,13 @@ int main(int argc, char **argv) {
         printf("PCA on X...\n");
         // PCA on X
         // LAPACKE_dgesdd overwrites X, so let's copy it
-        double *Xc_copy = (double *)malloc(N * P_X * sizeof(double));
+        double *Xc_copy = (double *)malloc_numa(N * P_X * sizeof(double));
         memcpy(Xc_copy, X, N * P_X * sizeof(double));
 
         int min_dim_X = N < P_X ? N : P_X;
-        double *S_x = (double *)malloc(min_dim_X * sizeof(double));
-        double *U_x = (double *)malloc(N * min_dim_X * sizeof(double));
-        double *Vt_x = (double *)malloc(min_dim_X * P_X * sizeof(double));
+        double *S_x = (double *)malloc_numa(min_dim_X * sizeof(double));
+        double *U_x = (double *)malloc_numa(N * min_dim_X * sizeof(double));
+        double *Vt_x = (double *)malloc_numa(min_dim_X * P_X * sizeof(double));
         LAPACKE_dgesdd(LAPACK_ROW_MAJOR, 'S', N, P_X, Xc_copy, P_X, S_x, U_x, min_dim_X, Vt_x, P_X);
 
         if (nx == -1) {
@@ -299,7 +319,7 @@ int main(int argc, char **argv) {
         printf("PCA on X completed.\n");
 
         // PCx is Vt_x[:nx, :].T  -> P_X x nx
-        double *PCx = (double *)malloc(P_X * nx * sizeof(double));
+        double *PCx = (double *)malloc_numa(P_X * nx * sizeof(double));
         for (long p = 0; p < P_X; p++) {
             for (int k = 0; k < nx; k++) {
                 PCx[p * nx + k] = Vt_x[k * P_X + p];
@@ -307,7 +327,7 @@ int main(int argc, char **argv) {
         }
 
         // T = X @ PCx
-        double *T = (double *)malloc(N * nx * sizeof(double));
+        double *T = (double *)malloc_numa(N * nx * sizeof(double));
         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                     N, nx, P_X, 1.0, X, P_X, PCx, nx, 0.0, T, nx);
 
@@ -325,14 +345,14 @@ int main(int argc, char **argv) {
                n_patches, patchsize, patchsize, ny_per_patch, y_pca_mode ? "PCA" : "Raw Pixels");
         
         target_dim_total = n_patches * ny_per_patch;
-        U_latent = (double *)malloc(N * target_dim_total * sizeof(double));
-        if (y_pca_mode) PCy_global = (double *)malloc(n_patches * patch_pixels * ny_per_patch * sizeof(double));
+        U_latent = (double *)malloc_numa(N * target_dim_total * sizeof(double));
+        if (y_pca_mode) PCy_global = (double *)malloc_numa(n_patches * patch_pixels * ny_per_patch * sizeof(double));
 
         for (int py = 0; py < nyp; py++) {
             for (int px = 0; px < nxp; px++) {
                 int patch_idx = py * nxp + px;
                 // Extract patch stack N x patch_pixels
-                double *Y_patch = (double *)malloc(N * patch_pixels * sizeof(double));
+                double *Y_patch = (double *)malloc_numa(N * patch_pixels * sizeof(double));
                 for (int i = 0; i < N; i++) {
                     for (int dy = 0; dy < patchsize; dy++) {
                         for (int dx = 0; dx < patchsize; dx++) {
@@ -343,12 +363,12 @@ int main(int argc, char **argv) {
 
                 if (y_pca_mode) {
                     // PCA on Y_patch
-                    double *Yc_patch = (double *)malloc(N * patch_pixels * sizeof(double));
+                    double *Yc_patch = (double *)malloc_numa(N * patch_pixels * sizeof(double));
                     memcpy(Yc_patch, Y_patch, N * patch_pixels * sizeof(double));
                     int min_dim_patch = N < patch_pixels ? N : patch_pixels;
-                    double *S_p = (double *)malloc(min_dim_patch * sizeof(double));
-                    double *U_p = (double *)malloc(N * min_dim_patch * sizeof(double));
-                    double *Vt_p = (double *)malloc(min_dim_patch * patch_pixels * sizeof(double));
+                    double *S_p = (double *)malloc_numa(min_dim_patch * sizeof(double));
+                    double *U_p = (double *)malloc_numa(N * min_dim_patch * sizeof(double));
+                    double *Vt_p = (double *)malloc_numa(min_dim_patch * patch_pixels * sizeof(double));
                     LAPACKE_dgesdd(LAPACK_ROW_MAJOR, 'S', N, patch_pixels, Yc_patch, patch_pixels, S_p, U_p, min_dim_patch, Vt_p, patch_pixels);
 
                     int ny_this = ny_per_patch > min_dim_patch ? min_dim_patch : ny_per_patch;
@@ -362,7 +382,7 @@ int main(int argc, char **argv) {
 
                     // Compute coefficients U_patch = Y_patch @ PCy_patch
                     double *PCy_this = &PCy_global[patch_idx * (patch_pixels * ny_per_patch)];
-                    double *U_this = (double *)malloc(N * ny_per_patch * sizeof(double));
+                    double *U_this = (double *)malloc_numa(N * ny_per_patch * sizeof(double));
                     memset(U_this, 0, N * ny_per_patch * sizeof(double));
 
                     cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, N, ny_this, patch_pixels, 1.0, Y_patch, patch_pixels, PCy_this, ny_per_patch, 0.0, U_this, ny_per_patch);
@@ -383,14 +403,14 @@ int main(int argc, char **argv) {
                     }
                 }
 
-                free(Y_patch);
+                free_numa(Y_patch, N * patch_pixels * sizeof(double));
             }
         }
         int target_dim = target_dim_total;
         printf("Local PCA on Y completed. Latent dim: %d\n", target_dim);
 
         int z_dim = use_quadratic ? (nx + nx*(nx+1)/2) : nx;
-        double *Z = (double *)malloc(N * z_dim * sizeof(double));
+        double *Z = (double *)malloc_numa(N * z_dim * sizeof(double));
         if (!Z) { fprintf(stderr, "Failed to allocate Z (N=%d, z_dim=%d)\n", (int)N, z_dim); exit(1); }
         printf("Starting quadratic expansion (z_dim=%d)...\n", z_dim);
         if (use_quadratic) {
@@ -407,22 +427,22 @@ int main(int argc, char **argv) {
         }
 
         printf("Starting regression...\n");
-        double *B_latent = (double *)malloc(z_dim * target_dim * sizeof(double));
+        double *B_latent = (double *)malloc_numa(z_dim * target_dim * sizeof(double));
         if (!B_latent) { fprintf(stderr, "Failed to allocate B_latent (%d x %d)\n", z_dim, target_dim); exit(1); }
         
         if (reg_mode) {
             double eps = DBL_EPSILON;
             if (N < z_dim) {
                 // Dual ridge regression: B = Z^T (Z Z^T + lambda I)^-1 U
-                double *ZZt = (double *)malloc(N * N * sizeof(double));
+                double *ZZt = (double *)malloc_numa(N * N * sizeof(double));
                 if (!ZZt) { fprintf(stderr, "Failed to allocate ZZt (%d x %d)\n", (int)N, (int)N); exit(1); }
                 cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
                             N, N, z_dim, 1.0, Z, z_dim, Z, z_dim, 0.0, ZZt, N);
                 
-                double *ZZt_copy = (double *)malloc(N * N * sizeof(double));
+                double *ZZt_copy = (double *)malloc_numa(N * N * sizeof(double));
                 if (!ZZt_copy) { fprintf(stderr, "Failed to allocate ZZt_copy\n"); exit(1); }
                 memcpy(ZZt_copy, ZZt, N * N * sizeof(double));
-                double *S_zzt = (double *)malloc(N * sizeof(double));
+                double *S_zzt = (double *)malloc_numa(N * sizeof(double));
                 LAPACKE_dgesdd(LAPACK_ROW_MAJOR, 'N', N, N, ZZt_copy, N, S_zzt, NULL, 1, NULL, 1);
                 
                 double norm_ZZt = S_zzt[0];
@@ -430,7 +450,7 @@ int main(int argc, char **argv) {
                 
                 for (int i = 0; i < N; i++) ZZt[i * N + i] += ridge_auto;
                 
-                double *M = (double *)malloc(N * target_dim * sizeof(double));
+                double *M = (double *)malloc_numa(N * target_dim * sizeof(double));
                 if (!M) { fprintf(stderr, "Failed to allocate M\n"); exit(1); }
                 memcpy(M, U_latent, N * target_dim * sizeof(double));
                 
@@ -441,7 +461,10 @@ int main(int argc, char **argv) {
                 cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                             z_dim, target_dim, N, 1.0, Z, z_dim, M, target_dim, 0.0, B_latent, target_dim);
                 
-                free(ZZt); free(ZZt_copy); free(S_zzt); free(M);
+                free_numa(ZZt, N * N * sizeof(double));
+                free_numa(ZZt_copy, N * N * sizeof(double));
+                free_numa(S_zzt, N * sizeof(double));
+                free_numa(M, N * target_dim * sizeof(double));
             } else {
                 // Primal ridge regression: B = (Z^T Z + lambda I)^-1 Z^T U
                 double *ZtZ = (double *)malloc(z_dim * z_dim * sizeof(double));
@@ -449,10 +472,10 @@ int main(int argc, char **argv) {
                 cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                             z_dim, z_dim, N, 1.0, Z, z_dim, Z, z_dim, 0.0, ZtZ, z_dim);
                 
-                double *ZtZ_copy = (double *)malloc(z_dim * z_dim * sizeof(double));
+                double *ZtZ_copy = (double *)malloc_numa(z_dim * z_dim * sizeof(double));
                 if (!ZtZ_copy) { fprintf(stderr, "Failed to allocate ZtZ_copy\n"); exit(1); }
                 memcpy(ZtZ_copy, ZtZ, z_dim * z_dim * sizeof(double));
-                double *S_ztz = (double *)malloc(z_dim * sizeof(double));
+                double *S_ztz = (double *)malloc_numa(z_dim * sizeof(double));
                 LAPACKE_dgesdd(LAPACK_ROW_MAJOR, 'N', z_dim, z_dim, ZtZ_copy, z_dim, S_ztz, NULL, 1, NULL, 1);
                 
                 double norm_ZtZ = S_ztz[0];
@@ -460,14 +483,17 @@ int main(int argc, char **argv) {
     
                 for (int i = 0; i < z_dim; i++) ZtZ[i * z_dim + i] += ridge_auto;
     
-                double *ZtU = (double *)malloc(z_dim * target_dim * sizeof(double));
+                double *ZtU = (double *)malloc_numa(z_dim * target_dim * sizeof(double));
                 cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                             z_dim, target_dim, N, 1.0, Z, z_dim, U_latent, target_dim, 0.0, ZtU, target_dim);
                 
                 LAPACKE_dposv(LAPACK_ROW_MAJOR, 'U', z_dim, target_dim, ZtZ, z_dim, ZtU, target_dim);
                 memcpy(B_latent, ZtU, z_dim * target_dim * sizeof(double));
     
-                free(ZtZ); free(ZtZ_copy); free(S_ztz); free(ZtU);
+                free_numa(ZtZ, z_dim * z_dim * sizeof(double));
+                free_numa(ZtZ_copy, z_dim * z_dim * sizeof(double));
+                free_numa(S_ztz, z_dim * sizeof(double));
+                free_numa(ZtU, z_dim * target_dim * sizeof(double));
             }
         } else {
             // Pseudo-inverse
@@ -477,8 +503,8 @@ int main(int argc, char **argv) {
 
         if (!y_pca_mode && laplacian_lambda > 0) {
             printf("Applying laplacian smoothing...\n");
-            double *b_cube = (double *)malloc(target_dim * sizeof(double)); // target_dim == P_Y == xa_y * ya_y
-            double *b_cube_out = (double *)malloc(target_dim * sizeof(double));
+            double *b_cube = (double *)malloc_numa(target_dim * sizeof(double)); // target_dim == P_Y == xa_y * ya_y
+            double *b_cube_out = (double *)malloc_numa(target_dim * sizeof(double));
 
             for (int i = 0; i < z_dim; i++) {
                 // Extracts spatial frame from B_latent: B_latent is z_dim x target_dim. So i-th row is a frame.
@@ -489,7 +515,8 @@ int main(int argc, char **argv) {
                 }
                 for (int j = 0; j < target_dim; j++) B_latent[i * target_dim + j] = b_cube[j];
             }
-            free(b_cube); free(b_cube_out);
+            free_numa(b_cube, target_dim * sizeof(double));
+            free_numa(b_cube_out, target_dim * sizeof(double));
         }
 
         // Save everything
@@ -530,11 +557,22 @@ int main(int argc, char **argv) {
         fprintf(fp, "y_pca_mode %d\n", y_pca_mode);
         fclose(fp);
 
-        free(X); free(Y); free(X_mean); free(Y_mean); free(X_std); free(Y_std);
-        free(Xc_copy); free(S_x); free(U_x); free(Vt_x); free(PCx); free(T); 
-        free(Z); free(B_latent);
-        if (y_pca_mode) free(PCy_global);
-        free(U_latent);
+        free_numa(X, N_X * P_X * sizeof(double));
+        free_numa(Y, N_Y * P_Y * sizeof(double));
+        free_numa(X_mean, P_X * sizeof(double));
+        free_numa(Y_mean, P_Y * sizeof(double));
+        free_numa(X_std, P_X * sizeof(double));
+        free_numa(Y_std, P_Y * sizeof(double));
+        free_numa(Xc_copy, N * P_X * sizeof(double));
+        free_numa(S_x, min_dim_X * sizeof(double));
+        free_numa(U_x, N * min_dim_X * sizeof(double));
+        free_numa(Vt_x, min_dim_X * P_X * sizeof(double));
+        free_numa(PCx, P_X * nx * sizeof(double));
+        free_numa(T, N * nx * sizeof(double)); 
+        free_numa(Z, N * z_dim * sizeof(double));
+        free_numa(B_latent, z_dim * target_dim * sizeof(double));
+        if (y_pca_mode) free_numa(PCy_global, n_patches * patch_pixels * ny_per_patch * sizeof(double));
+        free_numa(U_latent, N * target_dim_total * sizeof(double));
     } else {
         // ===================================
         // SINGLE PRECISION PATH
@@ -563,10 +601,10 @@ int main(int argc, char **argv) {
         }
         printf("Using N = %d samples. P_X = %ld, P_Y = %ld\n", N, P_X, P_Y);
 
-        float *X_mean = (float*)calloc(P_X, sizeof(float));
-        float *Y_mean = (float*)calloc(P_Y, sizeof(float));
-        float *X_std = (float*)malloc(P_X * sizeof(float));
-        float *Y_std = (float*)malloc(P_Y * sizeof(float));
+        float *X_mean = (float*)calloc_numa(P_X, sizeof(float));
+        float *Y_mean = (float*)calloc_numa(P_Y, sizeof(float));
+        float *X_std = (float*)malloc_numa(P_X * sizeof(float));
+        float *Y_std = (float*)malloc_numa(P_Y * sizeof(float));
 
         for(long j=0; j<P_X; j++) X_std[j] = 1.0f;
         for(long j=0; j<P_Y; j++) Y_std[j] = 1.0f;
@@ -613,13 +651,13 @@ int main(int argc, char **argv) {
         }
 
         printf("PCA on X...\n");
-        float *Xc_copy = (float *)malloc(N * P_X * sizeof(float));
+        float *Xc_copy = (float *)malloc_numa(N * P_X * sizeof(float));
         memcpy(Xc_copy, X, N * P_X * sizeof(float));
 
         int min_dim_X = N < P_X ? N : P_X;
-        float *S_x = (float *)malloc(min_dim_X * sizeof(float));
-        float *U_x = (float *)malloc(N * min_dim_X * sizeof(float));
-        float *Vt_x = (float *)malloc(min_dim_X * P_X * sizeof(float));
+        float *S_x = (float *)malloc_numa(min_dim_X * sizeof(float));
+        float *U_x = (float *)malloc_numa(N * min_dim_X * sizeof(float));
+        float *Vt_x = (float *)malloc_numa(min_dim_X * P_X * sizeof(float));
         LAPACKE_sgesdd(LAPACK_ROW_MAJOR, 'S', N, P_X, Xc_copy, P_X, S_x, U_x, min_dim_X, Vt_x, P_X);
 
         if (nx == -1) {
@@ -664,13 +702,13 @@ int main(int argc, char **argv) {
                n_patches, patchsize, patchsize, ny_per_patch, y_pca_mode ? "PCA" : "Raw Pixels");
         
         target_dim_total = n_patches * ny_per_patch;
-        U_latent = (float *)malloc(N * target_dim_total * sizeof(float));
-        if (y_pca_mode) PCy_global = (float *)malloc(n_patches * patch_pixels * ny_per_patch * sizeof(float));
+        U_latent = (float *)malloc_numa(N * target_dim_total * sizeof(float));
+        if (y_pca_mode) PCy_global = (float *)malloc_numa(n_patches * patch_pixels * ny_per_patch * sizeof(float));
 
         for (int py = 0; py < nyp; py++) {
             for (int px = 0; px < nxp; px++) {
                 int patch_idx = py * nxp + px;
-                float *Y_patch = (float *)malloc(N * patch_pixels * sizeof(float));
+                float *Y_patch = (float *)malloc_numa(N * patch_pixels * sizeof(float));
                 for (int i = 0; i < N; i++) {
                     for (int dy = 0; dy < patchsize; dy++) {
                         for (int dx = 0; dx < patchsize; dx++) {
@@ -680,12 +718,12 @@ int main(int argc, char **argv) {
                 }
 
                 if (y_pca_mode) {
-                    float *Yc_patch = (float *)malloc(N * patch_pixels * sizeof(float));
+                    float *Yc_patch = (float *)malloc_numa(N * patch_pixels * sizeof(float));
                     memcpy(Yc_patch, Y_patch, N * patch_pixels * sizeof(float));
                     int min_dim_patch = N < patch_pixels ? N : patch_pixels;
-                    float *S_p = (float *)malloc(min_dim_patch * sizeof(float));
-                    float *U_p = (float *)malloc(N * min_dim_patch * sizeof(float));
-                    float *Vt_p = (float *)malloc(min_dim_patch * patch_pixels * sizeof(float));
+                    float *S_p = (float *)malloc_numa(min_dim_patch * sizeof(float));
+                    float *U_p = (float *)malloc_numa(N * min_dim_patch * sizeof(float));
+                    float *Vt_p = (float *)malloc_numa(min_dim_patch * patch_pixels * sizeof(float));
                     LAPACKE_sgesdd(LAPACK_ROW_MAJOR, 'S', N, patch_pixels, Yc_patch, patch_pixels, S_p, U_p, min_dim_patch, Vt_p, patch_pixels);
 
                     int ny_this = ny_per_patch > min_dim_patch ? min_dim_patch : ny_per_patch;
@@ -696,7 +734,7 @@ int main(int argc, char **argv) {
                     }
 
                     float *PCy_this = &PCy_global[patch_idx * (patch_pixels * ny_per_patch)];
-                    float *U_this = (float *)malloc(N * ny_per_patch * sizeof(float));
+                    float *U_this = (float *)malloc_numa(N * ny_per_patch * sizeof(float));
                     memset(U_this, 0, N * ny_per_patch * sizeof(float));
                     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, N, ny_this, patch_pixels, 1.0f, Y_patch, patch_pixels, PCy_this, ny_per_patch, 0.0f, U_this, ny_per_patch);
 
@@ -705,7 +743,11 @@ int main(int argc, char **argv) {
                             U_latent[i * target_dim_total + patch_idx * ny_per_patch + k] = U_this[i * ny_per_patch + k];
                         }
                     }
-                    free(Yc_patch); free(S_p); free(U_p); free(Vt_p); free(U_this);
+                    free_numa(Yc_patch, N * patch_pixels * sizeof(float));
+                    free_numa(S_p, min_dim_patch * sizeof(float));
+                    free_numa(U_p, N * min_dim_patch * sizeof(float));
+                    free_numa(Vt_p, min_dim_patch * patch_pixels * sizeof(float));
+                    free_numa(U_this, N * ny_per_patch * sizeof(float));
                 } else {
                     for (int i = 0; i < N; i++) {
                         for (int k = 0; k < patch_pixels; k++) {
@@ -713,13 +755,13 @@ int main(int argc, char **argv) {
                         }
                     }
                 }
-                free(Y_patch);
+                free_numa(Y_patch, N * patch_pixels * sizeof(float));
             }
         }
         int target_dim = target_dim_total;
 
         int z_dim = use_quadratic ? (nx + nx*(nx+1)/2) : nx;
-        float *Z = (float *)malloc(N * z_dim * sizeof(float));
+        float *Z = (float *)malloc_numa(N * z_dim * sizeof(float));
         if (!Z) { fprintf(stderr, "Failed to allocate Z (N=%d, z_dim=%d)\n", (int)N, z_dim); exit(1); }
         if (use_quadratic) quadratic_expand_float(T, Z, N, nx);
         else memcpy(Z, T, N * nx * sizeof(float));
@@ -728,45 +770,51 @@ int main(int argc, char **argv) {
             for (int i = 0; i < N * z_dim; i++) Z[i] += (float)(rand_normal() * noise_std);
         }
 
-        float *B_latent = (float *)malloc(z_dim * target_dim * sizeof(float));
+        float *B_latent = (float *)malloc_numa(z_dim * target_dim * sizeof(float));
         if (reg_mode) {
             float eps = FLT_EPSILON;
             if (N < z_dim) {
-                float *ZZt = (float *)malloc(N * N * sizeof(float));
+                float *ZZt = (float *)malloc_numa(N * N * sizeof(float));
                 cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, N, N, z_dim, 1.0f, Z, z_dim, Z, z_dim, 0.0f, ZZt, N);
-                float *ZZt_copy = (float *)malloc(N * N * sizeof(float));
+                float *ZZt_copy = (float *)malloc_numa(N * N * sizeof(float));
                 memcpy(ZZt_copy, ZZt, N * N * sizeof(float));
-                float *S_zzt = (float *)malloc(N * sizeof(float));
+                float *S_zzt = (float *)malloc_numa(N * sizeof(float));
                 LAPACKE_sgesdd(LAPACK_ROW_MAJOR, 'N', N, N, ZZt_copy, N, S_zzt, NULL, 1, NULL, 1);
                 float ridge_auto = eps * z_dim * S_zzt[0];
                 for (int i = 0; i < N; i++) ZZt[i * N + i] += ridge_auto;
-                float *M = (float *)malloc(N * target_dim * sizeof(float));
+                float *M = (float *)malloc_numa(N * target_dim * sizeof(float));
                 memcpy(M, U_latent, N * target_dim * sizeof(float));
                 LAPACKE_sposv(LAPACK_ROW_MAJOR, 'U', N, target_dim, ZZt, N, M, target_dim);
                 cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, z_dim, target_dim, N, 1.0f, Z, z_dim, M, target_dim, 0.0f, B_latent, target_dim);
-                free(ZZt); free(ZZt_copy); free(S_zzt); free(M);
+                free_numa(ZZt, N * N * sizeof(float));
+                free_numa(ZZt_copy, N * N * sizeof(float));
+                free_numa(S_zzt, N * sizeof(float));
+                free_numa(M, N * target_dim * sizeof(float));
             } else {
-                float *ZtZ = (float *)malloc(z_dim * z_dim * sizeof(float));
+                float *ZtZ = (float *)malloc_numa(z_dim * z_dim * sizeof(float));
                 cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, z_dim, z_dim, N, 1.0f, Z, z_dim, Z, z_dim, 0.0f, ZtZ, z_dim);
-                float *ZtZ_copy = (float *)malloc(z_dim * z_dim * sizeof(float));
+                float *ZtZ_copy = (float *)malloc_numa(z_dim * z_dim * sizeof(float));
                 memcpy(ZtZ_copy, ZtZ, z_dim * z_dim * sizeof(float));
-                float *S_ztz = (float *)malloc(z_dim * sizeof(float));
+                float *S_ztz = (float *)malloc_numa(z_dim * sizeof(float));
                 LAPACKE_sgesdd(LAPACK_ROW_MAJOR, 'N', z_dim, z_dim, ZtZ_copy, z_dim, S_ztz, NULL, 1, NULL, 1);
                 float ridge_auto = eps * z_dim * S_ztz[0];
                 for (int i = 0; i < z_dim; i++) ZtZ[i * z_dim + i] += ridge_auto;
-                float *ZtU = (float *)malloc(z_dim * target_dim * sizeof(float));
+                float *ZtU = (float *)malloc_numa(z_dim * target_dim * sizeof(float));
                 cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, z_dim, target_dim, N, 1.0f, Z, z_dim, U_latent, target_dim, 0.0f, ZtU, target_dim);
                 LAPACKE_sposv(LAPACK_ROW_MAJOR, 'U', z_dim, target_dim, ZtZ, z_dim, ZtU, target_dim);
                 memcpy(B_latent, ZtU, z_dim * target_dim * sizeof(float));
-                free(ZtZ); free(ZtZ_copy); free(S_ztz); free(ZtU);
+                free_numa(ZtZ, z_dim * z_dim * sizeof(float));
+                free_numa(ZtZ_copy, z_dim * z_dim * sizeof(float));
+                free_numa(S_ztz, z_dim * sizeof(float));
+                free_numa(ZtU, z_dim * target_dim * sizeof(float));
             }
         } else {
             solve_least_squares_float(Z, U_latent, B_latent, N, z_dim, target_dim);
         }
 
         if (laplacian_lambda > 0) {
-            float *b_cube = (float *)malloc(target_dim * sizeof(float));
-            float *b_cube_out = (float *)malloc(target_dim * sizeof(float));
+            float *b_cube = (float *)malloc_numa(target_dim * sizeof(float));
+            float *b_cube_out = (float *)malloc_numa(target_dim * sizeof(float));
             for (int i = 0; i < z_dim; i++) {
                 for (int j = 0; j < target_dim; j++) b_cube[j] = B_latent[i * target_dim + j];
                 // Note: Laplacian on patch coefficients might be less meaningful geometrically,
@@ -775,7 +823,8 @@ int main(int argc, char **argv) {
                 // geometry-aware smoothing would be harder here. 
                 // For now skip or apply dummy. 
             }
-            free(b_cube); free(b_cube_out);
+            free_numa(b_cube, target_dim * sizeof(float));
+            free_numa(b_cube_out, target_dim * sizeof(float));
         }
 
         char path[1024];
