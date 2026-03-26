@@ -397,78 +397,78 @@ int main(int argc, char **argv) {
                 printf("Applying true Laplacian Regularization (Sylvester Equation)...\n");
                 // 1. A = Z^T Z + lambda_ridge I
                 double *A = (double *)malloc(z_dim * z_dim * sizeof(double));
+                if (!A) { fprintf(stderr, "Failed to allocate A\n"); exit(1); }
                 cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                             z_dim, z_dim, N, 1.0, Z, z_dim, Z, z_dim, 0.0, A, z_dim);
                 
                 // Get spectral norm for ridge auto
                 double *A_copy = (double *)malloc(z_dim * z_dim * sizeof(double));
+                if (!A_copy) { fprintf(stderr, "Failed to allocate A_copy\n"); exit(1); }
                 memcpy(A_copy, A, z_dim * z_dim * sizeof(double));
                 double *S_A = (double *)malloc(z_dim * sizeof(double));
+                if (!S_A) { fprintf(stderr, "Failed to allocate S_A\n"); exit(1); }
                 LAPACKE_dgesdd(LAPACK_ROW_MAJOR, 'N', z_dim, z_dim, A_copy, z_dim, S_A, NULL, 1, NULL, 1);
                 double ridge_auto = eps * z_dim * S_A[0];
                 for (int i = 0; i < z_dim; i++) A[i * z_dim + i] += ridge_auto;
+                free(A_copy);
                 
-                // 2. Eigendecompose A = U_A \Lambda_A U_A^T
-                double *U_A = (double *)malloc(z_dim * z_dim * sizeof(double));
-                memcpy(U_A, A, z_dim * z_dim * sizeof(double));
-                LAPACKE_dsyev(LAPACK_ROW_MAJOR, 'V', 'U', z_dim, U_A, z_dim, S_A); // S_A now contains \Lambda_A
+                // 2. Eigendecompose A
+                LAPACKE_dsyev(LAPACK_ROW_MAJOR, 'V', 'U', z_dim, A, z_dim, S_A); 
+                double *U_A = A;
                 
                 // 3. Compute Q = Z^T Y
                 double *Q = (double *)malloc(z_dim * target_dim * sizeof(double));
+                if (!Q) { fprintf(stderr, "Failed to allocate Q\n"); exit(1); }
                 cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                             z_dim, target_dim, N, 1.0, Z, z_dim, U_latent, target_dim, 0.0, Q, target_dim);
                 
                 // 4. Compute \hat{Q} = U_A^T Q
                 double *Q_hat = (double *)malloc(z_dim * target_dim * sizeof(double));
+                if (!Q_hat) { fprintf(stderr, "Failed to allocate Q_hat\n"); exit(1); }
                 cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                             z_dim, target_dim, z_dim, 1.0, U_A, z_dim, Q, target_dim, 0.0, Q_hat, target_dim);
+                free(Q);
                 
                 // 5. 1D DCT Basis
                 double *U_dct_x = (double *)malloc(xa_y * xa_y * sizeof(double));
-                build_dct_basis_double(U_dct_x, xa_y);
                 double *U_dct_y = (double *)malloc(ya_y * ya_y * sizeof(double));
+                if (!U_dct_x || !U_dct_y) { fprintf(stderr, "Failed to alloc DCT bases\n"); exit(1); }
+                build_dct_basis_double(U_dct_x, xa_y);
                 build_dct_basis_double(U_dct_y, ya_y);
                 
-                // 6. Compute \tilde{Q} = \hat{Q} U_C. \hat{Q} is z_dim x (ya_y * xa_y).
-                double *Q_tilde = (double *)malloc(z_dim * target_dim * sizeof(double));
+                // 6-8. Row-by-row Laplacian Processing
+                double *B_hat = (double *)malloc(z_dim * target_dim * sizeof(double));
                 double *temp_row = (double *)malloc(target_dim * sizeof(double));
-                for (int i = 0; i < z_dim; i++) {
-                    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
-                                ya_y, xa_y, xa_y, 1.0, &Q_hat[i * target_dim], xa_y, U_dct_x, xa_y, 0.0, temp_row, xa_y);
-                    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-                                ya_y, xa_y, ya_y, 1.0, U_dct_y, ya_y, temp_row, xa_y, 0.0, &Q_tilde[i * target_dim], xa_y);
+                double *row_tilde = (double *)malloc(target_dim * sizeof(double));
+                double *row_spatial = (double *)malloc(target_dim * sizeof(double));
+                if (!B_hat || !temp_row || !row_tilde || !row_spatial) {
+                    fprintf(stderr, "Failed to alloc row buffers\n"); exit(1);
                 }
-                
-                // 7. Divide by eigenvalues
-                double *B_tilde = (double *)malloc(z_dim * target_dim * sizeof(double));
                 for (int i = 0; i < z_dim; i++) {
+                    memcpy(row_spatial, &Q_hat[i * target_dim], target_dim * sizeof(double));
+                    
+                    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, ya_y, xa_y, xa_y, 1.0, row_spatial, xa_y, U_dct_x, xa_y, 0.0, temp_row, xa_y);
+                    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, ya_y, xa_y, ya_y, 1.0, U_dct_y, ya_y, temp_row, xa_y, 0.0, row_tilde, xa_y);
+                    
                     for (int v = 0; v < ya_y; v++) {
                         for (int u = 0; u < xa_y; u++) {
                             double E_uv = 4.0 * sin(M_PI * u / (2.0 * xa_y)) * sin(M_PI * u / (2.0 * xa_y)) +
                                           4.0 * sin(M_PI * v / (2.0 * ya_y)) * sin(M_PI * v / (2.0 * ya_y));
-                            double denom = S_A[i] + laplacian_lambda * E_uv;
-                            int j = v * xa_y + u;
-                            B_tilde[i * target_dim + j] = Q_tilde[i * target_dim + j] / denom;
+                            row_tilde[v * xa_y + u] /= (S_A[i] + laplacian_lambda * E_uv);
                         }
                     }
+                    
+                    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, ya_y, xa_y, xa_y, 1.0, row_tilde, xa_y, U_dct_x, xa_y, 0.0, temp_row, xa_y);
+                    cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, ya_y, xa_y, ya_y, 1.0, U_dct_y, ya_y, temp_row, xa_y, 0.0, &B_hat[i * target_dim], xa_y);
                 }
-                
-                // 8. Inverse DCT: \hat{B} = \tilde{B} U_C^T
-                double *B_hat = (double *)malloc(z_dim * target_dim * sizeof(double));
-                for (int i = 0; i < z_dim; i++) {
-                    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-                                ya_y, xa_y, xa_y, 1.0, &B_tilde[i * target_dim], xa_y, U_dct_x, xa_y, 0.0, temp_row, xa_y);
-                    cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                                ya_y, xa_y, ya_y, 1.0, U_dct_y, ya_y, temp_row, xa_y, 0.0, &B_hat[i * target_dim], xa_y);
-                }
+                free(row_spatial); free(temp_row); free(row_tilde);
+                free(Q_hat); free(U_dct_x); free(U_dct_y);
                 
                 // 9. Re-project B = U_A \hat{B}
                 cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                             z_dim, target_dim, z_dim, 1.0, U_A, z_dim, B_hat, target_dim, 0.0, B_latent, target_dim);
                             
-                free(A); free(A_copy); free(S_A); free(U_A);
-                free(Q); free(Q_hat); free(U_dct_x); free(U_dct_y);
-                free(Q_tilde); free(temp_row); free(B_tilde); free(B_hat);
+                free(A); free(S_A); free(B_hat);
             } else if (N < z_dim) {
                 // Dual ridge regression: B = Z^T (Z Z^T + lambda I)^-1 U
                 double *ZZt = (double *)malloc(N * N * sizeof(double));
@@ -480,9 +480,10 @@ int main(int argc, char **argv) {
                 if (!ZZt_copy) { fprintf(stderr, "Failed to allocate ZZt_copy\n"); exit(1); }
                 memcpy(ZZt_copy, ZZt, N * N * sizeof(double));
                 double *S_zzt = (double *)malloc(N * sizeof(double));
-                LAPACKE_dgesdd(LAPACK_ROW_MAJOR, 'N', N, N, ZZt_copy, N, S_zzt, NULL, 1, NULL, 1);
+                if (!S_zzt) { fprintf(stderr, "Failed to allocate S_zzt\n"); exit(1); }
+                LAPACKE_dsyev(LAPACK_ROW_MAJOR, 'N', 'U', N, ZZt_copy, N, S_zzt);
                 
-                double norm_ZZt = S_zzt[0];
+                double norm_ZZt = S_zzt[N - 1];
                 double ridge_auto = eps * z_dim * norm_ZZt;
                 
                 for (int i = 0; i < N; i++) ZZt[i * N + i] += ridge_auto;
@@ -510,9 +511,10 @@ int main(int argc, char **argv) {
                 if (!ZtZ_copy) { fprintf(stderr, "Failed to allocate ZtZ_copy\n"); exit(1); }
                 memcpy(ZtZ_copy, ZtZ, z_dim * z_dim * sizeof(double));
                 double *S_ztz = (double *)malloc(z_dim * sizeof(double));
-                LAPACKE_dgesdd(LAPACK_ROW_MAJOR, 'N', z_dim, z_dim, ZtZ_copy, z_dim, S_ztz, NULL, 1, NULL, 1);
+                if (!S_ztz) { fprintf(stderr, "Failed to allocate S_ztz\n"); exit(1); }
+                LAPACKE_dsyev(LAPACK_ROW_MAJOR, 'N', 'U', z_dim, ZtZ_copy, z_dim, S_ztz);
                 
-                double norm_ZtZ = S_ztz[0];
+                double norm_ZtZ = S_ztz[z_dim - 1];
                 double ridge_auto = eps * z_dim * norm_ZtZ;
     
                 for (int i = 0; i < z_dim; i++) ZtZ[i * z_dim + i] += ridge_auto;
@@ -767,78 +769,78 @@ int main(int argc, char **argv) {
                 printf("Applying true Laplacian Regularization (Sylvester Equation - Float)...\n");
                 // 1. A = Z^T Z + lambda_ridge I
                 float *A = (float *)malloc(z_dim * z_dim * sizeof(float));
+                if (!A) { fprintf(stderr, "Failed to allocate A\n"); exit(1); }
                 cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                             z_dim, z_dim, N, 1.0f, Z, z_dim, Z, z_dim, 0.0f, A, z_dim);
                 
                 // Get spectral norm for ridge auto
                 float *A_copy = (float *)malloc(z_dim * z_dim * sizeof(float));
+                if (!A_copy) { fprintf(stderr, "Failed to allocate A_copy\n"); exit(1); }
                 memcpy(A_copy, A, z_dim * z_dim * sizeof(float));
                 float *S_A = (float *)malloc(z_dim * sizeof(float));
+                if (!S_A) { fprintf(stderr, "Failed to allocate S_A\n"); exit(1); }
                 LAPACKE_sgesdd(LAPACK_ROW_MAJOR, 'N', z_dim, z_dim, A_copy, z_dim, S_A, NULL, 1, NULL, 1);
                 float ridge_auto = eps * z_dim * S_A[0];
                 for (int i = 0; i < z_dim; i++) A[i * z_dim + i] += ridge_auto;
+                free(A_copy);
                 
-                // 2. Eigendecompose A = U_A \Lambda_A U_A^T
-                float *U_A = (float *)malloc(z_dim * z_dim * sizeof(float));
-                memcpy(U_A, A, z_dim * z_dim * sizeof(float));
-                LAPACKE_ssyev(LAPACK_ROW_MAJOR, 'V', 'U', z_dim, U_A, z_dim, S_A); // S_A now contains \Lambda_A
+                // 2. Eigendecompose A
+                LAPACKE_ssyev(LAPACK_ROW_MAJOR, 'V', 'U', z_dim, A, z_dim, S_A); 
+                float *U_A = A;
                 
                 // 3. Compute Q = Z^T Y
                 float *Q = (float *)malloc(z_dim * target_dim * sizeof(float));
+                if (!Q) { fprintf(stderr, "Failed to allocate Q\n"); exit(1); }
                 cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                             z_dim, target_dim, N, 1.0f, Z, z_dim, U_latent, target_dim, 0.0f, Q, target_dim);
                 
                 // 4. Compute \hat{Q} = U_A^T Q
                 float *Q_hat = (float *)malloc(z_dim * target_dim * sizeof(float));
+                if (!Q_hat) { fprintf(stderr, "Failed to allocate Q_hat\n"); exit(1); }
                 cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
                             z_dim, target_dim, z_dim, 1.0f, U_A, z_dim, Q, target_dim, 0.0f, Q_hat, target_dim);
+                free(Q);
                 
                 // 5. 1D DCT Basis
                 float *U_dct_x = (float *)malloc(xa_y * xa_y * sizeof(float));
-                build_dct_basis_float(U_dct_x, xa_y);
                 float *U_dct_y = (float *)malloc(ya_y * ya_y * sizeof(float));
+                if (!U_dct_x || !U_dct_y) { fprintf(stderr, "Failed to alloc DCT bases\n"); exit(1); }
+                build_dct_basis_float(U_dct_x, xa_y);
                 build_dct_basis_float(U_dct_y, ya_y);
                 
-                // 6. Compute \tilde{Q} = \hat{Q} U_C
-                float *Q_tilde = (float *)malloc(z_dim * target_dim * sizeof(float));
+                // 6-8. Row-by-row Laplacian Processing
+                float *B_hat = (float *)malloc(z_dim * target_dim * sizeof(float));
                 float *temp_row = (float *)malloc(target_dim * sizeof(float));
-                for (int i = 0; i < z_dim; i++) {
-                    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
-                                ya_y, xa_y, xa_y, 1.0f, &Q_hat[i * target_dim], xa_y, U_dct_x, xa_y, 0.0f, temp_row, xa_y);
-                    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-                                ya_y, xa_y, ya_y, 1.0f, U_dct_y, ya_y, temp_row, xa_y, 0.0f, &Q_tilde[i * target_dim], xa_y);
+                float *row_tilde = (float *)malloc(target_dim * sizeof(float));
+                float *row_spatial = (float *)malloc(target_dim * sizeof(float));
+                if (!B_hat || !temp_row || !row_tilde || !row_spatial) {
+                    fprintf(stderr, "Failed to alloc row buffers\n"); exit(1);
                 }
-                
-                // 7. Divide by eigenvalues
-                float *B_tilde = (float *)malloc(z_dim * target_dim * sizeof(float));
                 for (int i = 0; i < z_dim; i++) {
+                    memcpy(row_spatial, &Q_hat[i * target_dim], target_dim * sizeof(float));
+                    
+                    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, ya_y, xa_y, xa_y, 1.0f, row_spatial, xa_y, U_dct_x, xa_y, 0.0f, temp_row, xa_y);
+                    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, ya_y, xa_y, ya_y, 1.0f, U_dct_y, ya_y, temp_row, xa_y, 0.0f, row_tilde, xa_y);
+                    
                     for (int v = 0; v < ya_y; v++) {
                         for (int u = 0; u < xa_y; u++) {
                             float E_uv = 4.0f * sinf((float)M_PI * u / (2.0f * xa_y)) * sinf((float)M_PI * u / (2.0f * xa_y)) +
                                          4.0f * sinf((float)M_PI * v / (2.0f * ya_y)) * sinf((float)M_PI * v / (2.0f * ya_y));
-                            float denom = S_A[i] + laplacian_lambda * E_uv;
-                            int j = v * xa_y + u;
-                            B_tilde[i * target_dim + j] = Q_tilde[i * target_dim + j] / denom;
+                            row_tilde[v * xa_y + u] /= (S_A[i] + laplacian_lambda * E_uv);
                         }
                     }
+                    
+                    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, ya_y, xa_y, xa_y, 1.0f, row_tilde, xa_y, U_dct_x, xa_y, 0.0f, temp_row, xa_y);
+                    cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, ya_y, xa_y, ya_y, 1.0f, U_dct_y, ya_y, temp_row, xa_y, 0.0f, &B_hat[i * target_dim], xa_y);
                 }
-                
-                // 8. Inverse DCT: \hat{B} = \tilde{B} U_C^T
-                float *B_hat = (float *)malloc(z_dim * target_dim * sizeof(float));
-                for (int i = 0; i < z_dim; i++) {
-                    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-                                ya_y, xa_y, xa_y, 1.0f, &B_tilde[i * target_dim], xa_y, U_dct_x, xa_y, 0.0f, temp_row, xa_y);
-                    cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                                ya_y, xa_y, ya_y, 1.0f, U_dct_y, ya_y, temp_row, xa_y, 0.0f, &B_hat[i * target_dim], xa_y);
-                }
+                free(row_spatial); free(temp_row); free(row_tilde);
+                free(Q_hat); free(U_dct_x); free(U_dct_y);
                 
                 // 9. Re-project B = U_A \hat{B}
                 cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                             z_dim, target_dim, z_dim, 1.0f, U_A, z_dim, B_hat, target_dim, 0.0f, B_latent, target_dim);
                             
-                free(A); free(A_copy); free(S_A); free(U_A);
-                free(Q); free(Q_hat); free(U_dct_x); free(U_dct_y);
-                free(Q_tilde); free(temp_row); free(B_tilde); free(B_hat);
+                free(A); free(S_A); free(B_hat);
             } else if (N < z_dim) {
                 // Dual ridge regression: B = Z^T (Z Z^T + lambda I)^-1 U
                 float *ZZt = (float *)malloc(N * N * sizeof(float));
@@ -850,9 +852,10 @@ int main(int argc, char **argv) {
                 if (!ZZt_copy) { fprintf(stderr, "Failed to allocate ZZt_copy\n"); exit(1); }
                 memcpy(ZZt_copy, ZZt, N * N * sizeof(float));
                 float *S_zzt = (float *)malloc(N * sizeof(float));
-                LAPACKE_sgesdd(LAPACK_ROW_MAJOR, 'N', N, N, ZZt_copy, N, S_zzt, NULL, 1, NULL, 1);
+                if (!S_zzt) { fprintf(stderr, "Failed to allocate S_zzt\n"); exit(1); }
+                LAPACKE_ssyev(LAPACK_ROW_MAJOR, 'N', 'U', N, ZZt_copy, N, S_zzt);
                 
-                float norm_ZZt = S_zzt[0];
+                float norm_ZZt = S_zzt[N - 1];
                 float ridge_auto = eps * z_dim * norm_ZZt;
                 
                 for (int i = 0; i < N; i++) ZZt[i * N + i] += ridge_auto;
@@ -878,9 +881,10 @@ int main(int argc, char **argv) {
                 if (!ZtZ_copy) { fprintf(stderr, "Failed to allocate ZtZ_copy\n"); exit(1); }
                 memcpy(ZtZ_copy, ZtZ, z_dim * z_dim * sizeof(float));
                 float *S_ztz = (float *)malloc(z_dim * sizeof(float));
-                LAPACKE_sgesdd(LAPACK_ROW_MAJOR, 'N', z_dim, z_dim, ZtZ_copy, z_dim, S_ztz, NULL, 1, NULL, 1);
+                if (!S_ztz) { fprintf(stderr, "Failed to allocate S_ztz\n"); exit(1); }
+                LAPACKE_ssyev(LAPACK_ROW_MAJOR, 'N', 'U', z_dim, ZtZ_copy, z_dim, S_ztz);
                 
-                float norm_ZtZ = S_ztz[0];
+                float norm_ZtZ = S_ztz[z_dim - 1];
                 float ridge_auto = eps * z_dim * norm_ZtZ;
     
                 for (int i = 0; i < z_dim; i++) ZtZ[i * z_dim + i] += ridge_auto;
