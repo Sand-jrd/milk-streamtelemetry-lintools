@@ -252,7 +252,10 @@ int main(int argc, char **argv) {
             for (long j = 0; j < P_Y; j++) Y_mean[j] += Y[i * P_Y + j];
         }
         for (long j = 0; j < P_X; j++) X_mean[j] /= N;
-        for (long j = 0; j < P_Y; j++) Y_mean[j] /= N;
+        for (long j = 0; j < P_Y; j++) {
+            Y_mean[j] /= N;
+            if (!(ny > 0)) Y_mean[j] = 0.0;
+        }
 
         for (int i = 0; i < N; i++) {
             for (long j = 0; j < P_X; j++) X[i * P_X + j] -= X_mean[j];
@@ -624,7 +627,10 @@ int main(int argc, char **argv) {
             for (long j = 0; j < P_Y; j++) Y_mean[j] += Y[i * P_Y + j];
         }
         for (long j = 0; j < P_X; j++) X_mean[j] /= N;
-        for (long j = 0; j < P_Y; j++) Y_mean[j] /= N;
+        for (long j = 0; j < P_Y; j++) {
+            Y_mean[j] /= N;
+            if (!(ny > 0)) Y_mean[j] = 0.0f;
+        }
 
         for (int i = 0; i < N; i++) {
             for (long j = 0; j < P_X; j++) X[i * P_X + j] -= X_mean[j];

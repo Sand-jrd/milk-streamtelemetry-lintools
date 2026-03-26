@@ -226,11 +226,17 @@ int main(int argc, char **argv) {
 
         // --- Incremental Math --- //
         printf("Updating Matrix...\n");
+        // Sanity check: target_dim from ZtU.fits should match computed target_dim_total
+        if ((long)target_dim_total != target_dim) {
+            fprintf(stderr, "Error: target_dim mismatch: ZtU.fits has %ld cols but current config gives %d. Model may be from a different fit.\n", target_dim, target_dim_total);
+            return 1;
+        }
+
         double *ZtZ_new = (double *)calloc_numa(z_dim * z_dim, sizeof(double));
-        double *ZtU_new = (double *)calloc_numa(z_dim * target_dim, sizeof(double));
+        double *ZtU_new = (double *)calloc_numa(z_dim * target_dim_total, sizeof(double));
 
         cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, z_dim, z_dim, N, 1.0, Z, z_dim, Z, z_dim, 0.0, ZtZ_new, z_dim);
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, z_dim, target_dim, N, 1.0, Z, z_dim, U_latent, target_dim, 0.0, ZtU_new, target_dim);
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, z_dim, target_dim_total, N, 1.0, Z, z_dim, U_latent, target_dim_total, 0.0, ZtU_new, target_dim_total);
 
         for (int i = 0; i < z_dim * z_dim; i++) ZtZ_total[i] += ZtZ_new[i];
         for (int i = 0; i < z_dim * target_dim; i++) ZtU_total[i] += ZtU_new[i];
@@ -286,7 +292,7 @@ int main(int argc, char **argv) {
         free_numa(X, N * P_X * sizeof(double)); free_numa(Y, N * P_Y * sizeof(double));
         free_numa(T, N * nx * sizeof(double)); free_numa(Z, N * z_dim * sizeof(double));
         free_numa(U_latent, N * target_dim_total * sizeof(double));
-        free_numa(ZtZ_new, z_dim * z_dim * sizeof(double)); free_numa(ZtU_new, z_dim * target_dim * sizeof(double));
+        free_numa(ZtZ_new, z_dim * z_dim * sizeof(double)); free_numa(ZtU_new, z_dim * target_dim_total * sizeof(double));
         free_numa(ZtZ_calc, z_dim * z_dim * sizeof(double)); free_numa(ZtU_calc, z_dim * target_dim * sizeof(double));
         free_numa(B_latent, z_dim * target_dim * sizeof(double));
 
@@ -413,11 +419,16 @@ int main(int argc, char **argv) {
         }
 
         printf("Updating Matrix...\n");
+        // Sanity check: target_dim from ZtU.fits should match computed target_dim_total
+        if ((long)target_dim_total != target_dim) {
+            fprintf(stderr, "Error: target_dim mismatch: ZtU.fits has %ld cols but current config gives %d. Model may be from a different fit.\n", target_dim, target_dim_total);
+            return 1;
+        }
         float *ZtZ_new = (float *)calloc_numa(z_dim * z_dim, sizeof(float));
-        float *ZtU_new = (float *)calloc_numa(z_dim * target_dim, sizeof(float));
+        float *ZtU_new = (float *)calloc_numa(z_dim * target_dim_total, sizeof(float));
 
         cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, z_dim, z_dim, N, 1.0f, Z, z_dim, Z, z_dim, 0.0f, ZtZ_new, z_dim);
-        cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, z_dim, target_dim, N, 1.0f, Z, z_dim, U_latent, target_dim, 0.0f, ZtU_new, target_dim);
+        cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, z_dim, target_dim_total, N, 1.0f, Z, z_dim, U_latent, target_dim_total, 0.0f, ZtU_new, target_dim_total);
 
         for (int i = 0; i < z_dim * z_dim; i++) ZtZ_total[i] += ZtZ_new[i];
         for (int i = 0; i < z_dim * target_dim; i++) ZtU_total[i] += ZtU_new[i];
@@ -471,7 +482,7 @@ int main(int argc, char **argv) {
         free_numa(X, N * P_X * sizeof(float)); free_numa(Y, N * P_Y * sizeof(float));
         free_numa(T, N * nx * sizeof(float)); free_numa(Z, N * z_dim * sizeof(float));
         free_numa(U_latent, N * target_dim_total * sizeof(float));
-        free_numa(ZtZ_new, z_dim * z_dim * sizeof(float)); free_numa(ZtU_new, z_dim * target_dim * sizeof(float));
+        free_numa(ZtZ_new, z_dim * z_dim * sizeof(float)); free_numa(ZtU_new, z_dim * target_dim_total * sizeof(float));
         free_numa(ZtZ_calc, z_dim * z_dim * sizeof(float)); free_numa(ZtU_calc, z_dim * target_dim * sizeof(float));
         free_numa(B_latent, z_dim * target_dim * sizeof(float));
     }
