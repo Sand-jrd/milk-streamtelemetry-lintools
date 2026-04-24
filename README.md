@@ -5,12 +5,15 @@
 This suite of tools performs Canonical Correlation Analysis (CCA) and Principal Component Analysis (PCA) on series of images (telemetry streams).
 The input typically consists of 3D FITS cubes (dimensions x, y, N), representing a series of N images.
 
-The suite includes five programs:
+The suite includes the following programs:
 *   `milk-streamtelemetry-pca`: Performs PCA (SVD) on a single dataset.
 *   `milk-streamtelemetry-cca`: Performs CCA between two datasets.
 *   `milk-streamtelemetry-recon`: Reconstructs datasets from modes and coefficients.
 *   `milk-streamtelemetry-pcamerge`: Merges multiple PCA results into a global basis.
 *   `milk-streamtelemetry-cubeshuffle`: Randomly shuffles the slices of a 3D FITS cube.
+*   `milk-streamtelemetry-wfs2psf-fit`: Fits a WFS→PSF quadratic mapping model from telemetry and image cubes.
+*   `milk-streamtelemetry-wfs2psf-predict`: Applies a fitted WFS→PSF model to generate predicted PSF cubes from telemetry.
+*   `milk-streamtelemetry-wfs2psf-update`: Incrementally updates an existing WFS→PSF model with new data.
 
 Dependencies: CFITSIO, OpenBLAS, LAPACKE.
 
@@ -129,3 +132,47 @@ milk-streamtelemetry-recon modesA.fits ccaA.fits spatial_canonical_A.fits
 ```bash
 milk-streamtelemetry-cca -shift 5 10 A.fits B.fits
 ```
+
+---
+
+## WFS→PSF Model (wfs2psf)
+
+These tools fit a quadratic mapping model from wavefront sensor telemetry (`cube_w.fits`) to focal-plane images (`cube_i.fits`), and then apply the model to generate PSF predictions.
+
+### Fit
+
+Trains the model on a dataset folder.
+
+```bash
+milk-streamtelemetry-wfs2psf-fit cube_w.fits cube_i.fits <out_prefix> -nx <n_components>
+```
+
+**Minimum example:**
+```bash
+milk-streamtelemetry-wfs2psf-fit cube_wsci.fits cube_isci.fits model1 -nx 50
+```
+
+This produces `model1_B_latent.fits`, `model1_PCx.fits`, `model1_Xmean.fits`, `model1_Ymean.fits` (and patch basis files), which are all needed by the predict step.
+
+**Key options:**
+*   `-nx <int>`: Number of WFS PCA components (default: 10). The most impactful parameter.
+*   `-ny <int>`: Number of PSF PCA components per patch (default: 5; set to 0 for raw pixels).
+*   `-patchsize <int>`: Spatial patch size for local PSF decomposition (default: 16).
+*   `-reg <float>`: Ridge regularization factor (default: 1.0).
+*   `-trainsize <int>`: Limit training to the first N frames.
+*   `-float`: Use single-precision arithmetic (faster, less memory).
+
+### Predict
+
+Applies a previously fitted model to a WFS telemetry cube to predict PSF frames.
+
+```bash
+milk-streamtelemetry-wfs2psf-predict cube_w.fits <out_prefix> <predicted_psf.fits>
+```
+
+**Minimum example:**
+```bash
+milk-streamtelemetry-wfs2psf-predict cube_wsci.fits model1 cube_ipred.fits
+```
+
+The `<out_prefix>` must match the prefix used during `wfs2psf-fit` so that the tool can locate all model files.

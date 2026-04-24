@@ -215,6 +215,10 @@ target_link_libraries(milk-streamtelemetry-wfs2psf-fit PRIVATE
     ${LAPACKE_LIBRARIES}
     m
 )
+if(USE_NUMA)
+    target_include_directories(milk-streamtelemetry-wfs2psf-fit PRIVATE ${NUMA_INCLUDE_DIRS})
+    target_link_libraries(milk-streamtelemetry-wfs2psf-fit PRIVATE ${NUMA_LIBRARIES})
+endif()
 
 # WFS2PSF Predict Program
 add_executable(milk-streamtelemetry-wfs2psf-predict wfs2psf_predict.c)
@@ -230,16 +234,19 @@ target_link_libraries(milk-streamtelemetry-wfs2psf-predict PRIVATE
     ${LAPACKE_LIBRARIES}
     m
 )
+if(USE_NUMA)
+    target_include_directories(milk-streamtelemetry-wfs2psf-predict PRIVATE ${NUMA_INCLUDE_DIRS})
+    target_link_libraries(milk-streamtelemetry-wfs2psf-predict PRIVATE ${NUMA_LIBRARIES})
+endif()
 
-
-# WFS2PSF Fit Program v2
-add_executable(milk-streamtelemetry-wfs2psf-fit-v2 wfs2psf_v2_fit.c)
-target_include_directories(milk-streamtelemetry-wfs2psf-fit-v2 PRIVATE
+# WFS2PSF Update Program
+add_executable(milk-streamtelemetry-wfs2psf-update wfs2psf_v2_update.c)
+target_include_directories(milk-streamtelemetry-wfs2psf-update PRIVATE
     ${CFITSIO_INCLUDE_DIRS}
     ${OPENBLAS_INCLUDE_DIRS}
     ${LAPACKE_INCLUDE_DIRS}
 )
-target_link_libraries(milk-streamtelemetry-wfs2psf-fit-v2 PRIVATE
+target_link_libraries(milk-streamtelemetry-wfs2psf-update PRIVATE
     common
     ${CFITSIO_LIBRARIES}
     ${OPENBLAS_LIBRARIES}
@@ -247,107 +254,9 @@ target_link_libraries(milk-streamtelemetry-wfs2psf-fit-v2 PRIVATE
     m
 )
 if(USE_NUMA)
-    target_include_directories(milk-streamtelemetry-wfs2psf-fit-v2 PRIVATE ${NUMA_INCLUDE_DIRS})
-    target_link_libraries(milk-streamtelemetry-wfs2psf-fit-v2 PRIVATE ${NUMA_LIBRARIES})
+    target_include_directories(milk-streamtelemetry-wfs2psf-update PRIVATE ${NUMA_INCLUDE_DIRS})
+    target_link_libraries(milk-streamtelemetry-wfs2psf-update PRIVATE ${NUMA_LIBRARIES})
 endif()
-
-# WFS2PSF Predict Program v2
-add_executable(milk-streamtelemetry-wfs2psf-predict-v2 wfs2psf_v2_predict.c)
-target_include_directories(milk-streamtelemetry-wfs2psf-predict-v2 PRIVATE
-    ${CFITSIO_INCLUDE_DIRS}
-    ${OPENBLAS_INCLUDE_DIRS}
-    ${LAPACKE_INCLUDE_DIRS}
-)
-target_link_libraries(milk-streamtelemetry-wfs2psf-predict-v2 PRIVATE
-    common
-    ${CFITSIO_LIBRARIES}
-    ${OPENBLAS_LIBRARIES}
-    ${LAPACKE_LIBRARIES}
-    m
-)
-if(USE_NUMA)
-    target_include_directories(milk-streamtelemetry-wfs2psf-predict-v2 PRIVATE ${NUMA_INCLUDE_DIRS})
-    target_link_libraries(milk-streamtelemetry-wfs2psf-predict-v2 PRIVATE ${NUMA_LIBRARIES})
-endif()
-
-# WFS2PSF Update Program v2
-add_executable(milk-streamtelemetry-wfs2psf-update-v2 wfs2psf_v2_update.c)
-target_include_directories(milk-streamtelemetry-wfs2psf-update-v2 PRIVATE
-    ${CFITSIO_INCLUDE_DIRS}
-    ${OPENBLAS_INCLUDE_DIRS}
-    ${LAPACKE_INCLUDE_DIRS}
-)
-target_link_libraries(milk-streamtelemetry-wfs2psf-update-v2 PRIVATE
-    common
-    ${CFITSIO_LIBRARIES}
-    ${OPENBLAS_LIBRARIES}
-    ${LAPACKE_LIBRARIES}
-    m
-)
-if(USE_NUMA)
-    target_include_directories(milk-streamtelemetry-wfs2psf-update-v2 PRIVATE ${NUMA_INCLUDE_DIRS})
-    target_link_libraries(milk-streamtelemetry-wfs2psf-update-v2 PRIVATE ${NUMA_LIBRARIES})
-endif()
-
-# WFS2PSF Fit Program v3
-add_executable(milk-streamtelemetry-wfs2psf-fit-v3 wfs2psf_v3_fit.c)
-target_include_directories(milk-streamtelemetry-wfs2psf-fit-v3 PRIVATE
-    ${CFITSIO_INCLUDE_DIRS}
-    ${OPENBLAS_INCLUDE_DIRS}
-    ${LAPACKE_INCLUDE_DIRS}
-)
-target_link_libraries(milk-streamtelemetry-wfs2psf-fit-v3 PRIVATE
-    common
-    ${CFITSIO_LIBRARIES}
-    ${OPENBLAS_LIBRARIES}
-    ${LAPACKE_LIBRARIES}
-    m
-)
-
-# WFS2PSF Predict Program v3
-add_executable(milk-streamtelemetry-wfs2psf-predict-v3 wfs2psf_v3_predict.c)
-target_include_directories(milk-streamtelemetry-wfs2psf-predict-v3 PRIVATE
-    ${CFITSIO_INCLUDE_DIRS}
-    ${OPENBLAS_INCLUDE_DIRS}
-    ${LAPACKE_INCLUDE_DIRS}
-)
-target_link_libraries(milk-streamtelemetry-wfs2psf-predict-v3 PRIVATE
-    common
-    ${CFITSIO_LIBRARIES}
-    ${OPENBLAS_LIBRARIES}
-    ${LAPACKE_LIBRARIES}
-    m
-)
-
-# WFS2PSF Fit Program v4
-add_executable(milk-streamtelemetry-wfs2psf-fit-v4 wfs2psf_v4_fit.c)
-target_include_directories(milk-streamtelemetry-wfs2psf-fit-v4 PRIVATE
-    ${CFITSIO_INCLUDE_DIRS}
-    ${OPENBLAS_INCLUDE_DIRS}
-    ${LAPACKE_INCLUDE_DIRS}
-)
-target_link_libraries(milk-streamtelemetry-wfs2psf-fit-v4 PRIVATE
-    common
-    ${CFITSIO_LIBRARIES}
-    ${OPENBLAS_LIBRARIES}
-    ${LAPACKE_LIBRARIES}
-    m
-)
-
-# WFS2PSF Predict Program v4
-add_executable(milk-streamtelemetry-wfs2psf-predict-v4 wfs2psf_v4_predict.c)
-target_include_directories(milk-streamtelemetry-wfs2psf-predict-v4 PRIVATE
-    ${CFITSIO_INCLUDE_DIRS}
-    ${OPENBLAS_INCLUDE_DIRS}
-    ${LAPACKE_INCLUDE_DIRS}
-)
-target_link_libraries(milk-streamtelemetry-wfs2psf-predict-v4 PRIVATE
-    common
-    ${CFITSIO_LIBRARIES}
-    ${OPENBLAS_LIBRARIES}
-    ${LAPACKE_LIBRARIES}
-    m
-)
 
 
 install(TARGETS
@@ -365,13 +274,7 @@ install(TARGETS
     milk-streamtelemetry-verify-corr
     milk-streamtelemetry-wfs2psf-fit
     milk-streamtelemetry-wfs2psf-predict
-    milk-streamtelemetry-wfs2psf-fit-v2
-    milk-streamtelemetry-wfs2psf-predict-v2
-    milk-streamtelemetry-wfs2psf-update-v2
-    milk-streamtelemetry-wfs2psf-fit-v3
-    milk-streamtelemetry-wfs2psf-predict-v3
-    milk-streamtelemetry-wfs2psf-fit-v4
-    milk-streamtelemetry-wfs2psf-predict-v4
+    milk-streamtelemetry-wfs2psf-update
 
     DESTINATION /usr/local/milk/bin
 )
